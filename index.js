@@ -147,6 +147,30 @@ const verifyOwnerOrAdmin = (req, res, next) => {
   next();
 };
 
+// FEATURED EQUIPMENT API
+// Get latest 6 approved equipment items
+app.get("/api/equipment/featured", async (req, res) => {
+  try {
+    const equipment = await equipmentCollection
+      .find({ status: "approved" })
+      .sort({ createdAt: -1 })
+      .limit(6)
+      .toArray();
+
+    res.status(200).send({
+      success: true,
+      count: equipment.length,
+      equipment,
+    });
+  } catch (error) {
+    console.error("Featured equipment error:", error);
+    res.status(500).send({
+      success: false,
+      message: "Failed to fetch featured equipment",
+    });
+  }
+});
+
 // Get API Status
 app.get("/", (req, res) => {
   res.send({
