@@ -136,6 +136,17 @@ const verifyAdmin = (req, res, next) => {
   next();
 };
 
+// owner or Admin access
+const verifyOwnerOrAdmin = (req, res, next) => {
+  if (!["owner", "admin"].includes(req.user?.role)) {
+    return res.status(403).send({
+      success: false,
+      message: "Owner or Admin access only",
+    });
+  }
+  next();
+};
+
 // Get API Status
 app.get("/", (req, res) => {
   res.send({
