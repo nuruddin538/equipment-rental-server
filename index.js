@@ -298,6 +298,44 @@ app.get("/api/owner/equipment", verifyToken, verifyOwner, async (req, res) => {
   }
 });
 
+// Single Equipment Details
+app.get(
+  "/api/owner/equipment/:id",
+  verifyToken,
+  verifyOwner,
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).send({
+          success: false,
+          message: "Invalid equipment ID.",
+        });
+      }
+      const equipment = await equipmentCollection.findOne({
+        _id: new ObjectId(id),
+        ownerId: req.user.id,
+      });
+      if (!equipment) {
+        return res.status(404).send({
+          success: false,
+          message: "Equipment not found.",
+        });
+      }
+      return res.status(200).send({
+        success: true,
+        equipment,
+      });
+    } catch (error) {
+      console.error("Get equipment error:", error);
+      return res.status(500).send({
+        success: false,
+        message: "Failed to fetch equipment details.",
+      });
+    }
+  }
+);
+
 // Admin-only access
 const verifyAdmin = (req, res, next) => {
   if (req.user?.role !== "admin") {
