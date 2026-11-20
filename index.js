@@ -562,6 +562,47 @@ app.get("/api/owner/rentals", verifyToken, verifyOwner, async (req, res) => {
   }
 });
 
+// OWNER DASHBOARD: PROFILE
+// GET OWNER PROFILE
+
+app.get("/api/owner/profile", verifyToken, verifyOwner, async (req, res) => {
+  try {
+    const owner = await usersCollection.findOne(
+      {
+        _id: new ObjectId(req.user.id),
+      },
+      {
+        projection: {
+          password: 0,
+        },
+      }
+    );
+    if (!owner) {
+      return res.status(404).send({
+        success: false,
+        message: "Owner profile not found.",
+      });
+    }
+    return res.status(200).send({
+      success: true,
+      profile: {
+        id: owner._id.toString(),
+        name: owner.name || "",
+        email: owner.email || "",
+        image: owner.image || "",
+        phone: owner.phone || "",
+        role: owner.role,
+      },
+    });
+  } catch (error) {
+    console.error("Owner profile error:", error);
+    return res.status(500).send({
+      success: false,
+      message: "Failed to fetch owner profile.",
+    });
+  }
+});
+
 // Admin-only access
 const verifyAdmin = (req, res, next) => {
   if (req.user?.role !== "admin") {
