@@ -417,6 +417,61 @@ app.patch(
   }
 );
 
+// OWNER DASHBOARD: DELETE EQUIPMENT
+app.delete(
+  "/api/owner/equipment/:id",
+  verifyToken,
+  verifyOwner,
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).send({
+          success: false,
+          message: "Invalid equipment ID.",
+        });
+      }
+      const equipment = await equipmentCollection.findOne({
+        _id: new ObjectId(id),
+        ownerId: req.user.id,
+      });
+      if (!equipment) {
+        return res.status(404).send({
+          success: false,
+          message: "Equipment not found.",
+        });
+      }
+      const activeBooking = await bookingsCollection.findOne({
+        equipmentId: id,
+        status: "confirmed",
+        endDate: {
+          $gt: new Date(),
+        },
+      });
+      if (activeBooking) {
+        return res.status(409).send({
+          success: false,
+          message: "Cannot delete equipment with active rentals.",
+        });
+      }
+      await equipmentCollection.deleteOne({
+        _id: new ObjectId(id),
+        ownerId: req.user.id,
+      });
+      return res.status(200).send({
+        success: true,
+        message: "Equipment deleted Successfully.",
+      });
+    } catch (error) {
+      console.error("Delete equipment error:", error);
+      return res.status(500).send({
+        success: false,
+        message: "Failed to delete equipment.",
+      });
+    }
+  }
+);
+
 // Admin-only access
 const verifyAdmin = (req, res, next) => {
   if (req.user?.role !== "admin") {
