@@ -336,6 +336,87 @@ app.get(
   }
 );
 
+// OWNER DASHBOARD: UPDATE EQUIPMENT
+app.patch(
+  "/api/owner/equipment/:id",
+  verifyToken,
+  verifyOwner,
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).send({
+          success: false,
+          message: "Invalid equipment ID.",
+        });
+      }
+      const validationError = validateEquipmentData(req.body);
+      if (validationError) {
+        return res.status(400).send({
+          success: false,
+          message: validationError,
+        });
+      }
+      const {
+        name,
+        description,
+        category,
+        location,
+        price,
+        rentalType,
+        availableQuantity,
+        condition,
+        brand,
+        model,
+        imageUrl,
+        rentalTerms,
+      } = req.body;
+      const updateData = {
+        name: name.trim(),
+        description: description.trim(),
+        category,
+        location: location.trim(),
+        price: Number(price),
+        pricePerDay: Number(price),
+        rentalType,
+        availableQuantity: Number(availableQuantity),
+        condition,
+        brand: brand.trim(),
+        model: model.trim(),
+        imageUrl: imageUrl.trim(),
+        images: [imageUrl.trim()],
+        rentalTerms: rentalTerms.trim(),
+        updatedAt: new Date(),
+      };
+      const result = await equipmentCollection.updateOne(
+        {
+          _id: new ObjectId(id),
+          ownerId: req.user.id,
+        },
+        {
+          $set: updateData,
+        }
+      );
+      if (result.matchedCount === 0) {
+        return res.status(404).send({
+          success: false,
+          message: "Equipment not found.",
+        });
+      }
+      return res.status(200).send({
+        success: true,
+        message: "Equipment updated Successfully.",
+      });
+    } catch (error) {
+      console.error("Update equipment error:", error);
+      return res.status(500).send({
+        success: false,
+        message: "Failed to update equipment.",
+      });
+    }
+  }
+);
+
 // Admin-only access
 const verifyAdmin = (req, res, next) => {
   if (req.user?.role !== "admin") {
