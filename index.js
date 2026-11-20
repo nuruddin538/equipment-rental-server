@@ -270,6 +270,34 @@ app.post("/api/owner/equipment", verifyToken, verifyOwner, async (req, res) => {
   }
 });
 
+// OWNER DASHBOARD: MY EQUIPMENT
+
+app.get("/api/owner/equipment", verifyToken, verifyOwner, async (req, res) => {
+  try {
+    const equipment = await equipmentCollection
+      .find({
+        ownerId: req.user.id,
+      })
+      .sort({
+        createdAt: -1,
+      })
+      .toArray();
+
+    return res.status(200).send({
+      success: true,
+      count: equipment.length,
+      equipment,
+    });
+  } catch (error) {
+    console.error("Get owner equipment error:", error);
+
+    return res.status(500).send({
+      success: false,
+      message: "Failed to fetch your equipment.",
+    });
+  }
+});
+
 // Admin-only access
 const verifyAdmin = (req, res, next) => {
   if (req.user?.role !== "admin") {
