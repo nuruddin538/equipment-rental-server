@@ -603,6 +603,64 @@ app.get("/api/owner/profile", verifyToken, verifyOwner, async (req, res) => {
   }
 });
 
+// UPDATE OWNER PROFILE
+app.patch("/api/owner/profile", verifyToken, verifyOwner, async (req, res) => {
+  try {
+    const { name, phone, image } = req.body;
+
+    if (!name?.trim() || name.trim().length < 2) {
+      return res.status(400).send({
+        success: false,
+        message: "Name must contain at least 2 characters.",
+      });
+    }
+
+    if (phone && !/^[+0-9()\-\s]{7,20}$/.test(phone)) {
+      return res.status(400).send({
+        success: false,
+        message: "Invalid phone number.",
+      });
+    }
+    if (image && !/^https:\/\//i.test(image)) {
+      return res.status(400).send({
+        success: false,
+        message: "Invalid profile image URL.",
+      });
+    }
+    const result = await usersCollection.updateOne(
+      {
+        _id: new ObjectId(req.user.id),
+        role: "owner",
+      },
+      {
+        $set: {
+          name: name.trim(),
+          phone: phone?.trim() || "",
+          ...(image !== undefined ? { image } : {}),
+          updatedAt: new Date(),
+        },
+      }
+    );
+    if (!result.matchedCount) {
+      return res.status(404).send({
+        success: false,
+        message: "Owner profile not found.",
+      });
+    }
+    return res.status(200).send({
+      success: true,
+      message: "Profile updated successfully.",
+    });
+  } catch (error) {
+    console.error("Update owner profile error:", error);
+
+    return res.status(500).send({
+      success: false,
+      message: "Failed to update owner profile.",
+    });
+  }
+});
+
 // Admin-only access
 const verifyAdmin = (req, res, next) => {
   if (req.user?.role !== "admin") {
