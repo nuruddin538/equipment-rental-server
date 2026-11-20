@@ -3,6 +3,7 @@ import express from "express";
 import cors from "cors";
 import { MongoClient, ObjectId } from "mongodb";
 import { createRemoteJWKSet, jwtVerify } from "jose";
+import Stripe from "stripe";
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -16,7 +17,15 @@ app.use(
     credentials: true,
   })
 );
-app.use(express.json());
+app.use(
+  express.json({
+    verify: (req, res, buffer) => {
+      req.rawBody = Buffer.from(buffer);
+    },
+  })
+);
+
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
 // MongoDB Connection
 const client = new MongoClient(process.env.MONGODB_URI);
@@ -124,6 +133,142 @@ const verifyOwner = (req, res, next) => {
   }
   next();
 };
+
+// OWNER DASHBOARD: EQUIPMENT HELPERS
+const equipmentCategories = [
+  "Construction Equipment",
+  "Photography Equipment",
+  "Vehicles & Transportation",
+  "Agriculture Equipment",
+  "Electronics",
+  "Event Equipment",
+];
+
+const rentalTypes = ["daily", "weekly", "monthly"];
+
+const equipmentConditions = ["New", "Like New", "Good", "Fair"];
+
+const validateEquipmentData = (data) => {
+  const {
+    name,
+    description,
+    category,
+    location,
+    price,
+    rentalType,
+    availableQuantity,
+    condition,
+    brand,
+    model,
+    imageUrl,
+    rentalItems,
+  } = data;
+
+  if (
+    !name?.trim() ||
+    !description?.trim() ||
+    !category ||
+    !location?.trim() ||
+    !price ||
+    !rentalType ||
+    availableQuantity === undefined ||
+    !condition ||
+    !brand?.trim() ||
+    !model?.trim() ||
+    !imageUrl?.trim() ||
+    !rentalTerms?.trim()
+  ) {
+    return "Please provide all required equipment information.";
+  }
+  if (!equipmentCategories.includes(category)) {
+    return "Invalid equipment category.";
+  }
+  if (!rentalTypes.includes(rentalType)) {
+    return "Invalid rental type.";
+  }
+  if (!equipmentConditions.includes(condition)) {
+    return "Invalid equipment condition.";
+  }
+  if (!Number.isFinite(Number(price)) || Number(price) <= 0) {
+    return "Rental price must be greater than zero.";
+  }
+  if (
+    !Number.isInteger(Number(availableQuantity)) ||
+    Number(availableQuantity) < 1
+  ) {
+    return "Available quantity must be a positive integer.";
+  }
+  if (!/^https:\/\//i.test(imageUrl)) {
+    return "A valid HTTPS equipment image URL is required.";
+  }
+  return null;
+};
+
+// OWNER DASHBOARD: ADD EQUIPMENT
+app.post("/api/owner/equipment", verifyToken, verifyOwner, async (req, res) => {
+  try {
+    const validationError = validateEquipmentData(req.body);
+    if (validationError) {
+      return res.status(400).send({
+        success: false,
+        message: validationError,
+      });
+    }
+    const {
+      name,
+      description,
+      category,
+      location,
+      price,
+      rentalType,
+      availableQuantity,
+      condition,
+      brand,
+      model,
+      imageUrl,
+      rentalTerms,
+    } = req.body;
+    const now = new Date();
+    const equipment = {
+      name: name.trim(),
+      description: description.trim(),
+      category,
+      location: location.trim(),
+      price: Number(price),
+      pricePerDay: Number(price),
+      rentalType,
+      availableQuantity: Number(availableQuantity),
+      condition,
+      brand: brand.trim(),
+      model: model.trim(),
+      imageUrl: imageUrl.trim(),
+      images: [imageUrl.trim()],
+      rentalTerms: rentalTerms.trim(),
+      ownerId: req.user.id,
+      ownerName: req.user.name,
+      ownerEmail: req.user.email,
+      ownerImage: req.user.image || "",
+      status: "pending",
+      createdAt: now,
+      updatedAt: now,
+    };
+    const result = await equipmentCollection.insertOne(equipment);
+    return res.status(201).send({
+      success: true,
+      message: "Equipment submitted for admin approval.",
+      equipment: {
+        ...equipment,
+        _id: result.insertedId.toString(),
+      },
+    });
+  } catch (error) {
+    console.error("Add equipment error:", error);
+    return res.status(500).send({
+      success: false,
+      message: "Failed to add equipment.",
+    });
+  }
+});
 
 // Admin-only access
 const verifyAdmin = (req, res, next) => {
