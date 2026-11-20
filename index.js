@@ -472,6 +472,96 @@ app.delete(
   }
 );
 
+//OWNER DASHBOARD: MY EQUIPMENT RENTALS
+app.get("/api/owner/rentals", verifyToken, verifyOwner, async (req, res) => {
+  try {
+    const rentals = await bookingsCollection
+      .aggregate([
+        {
+          $match: {
+            ownerId: req.user.id,
+          },
+        },
+        {
+          $addFields: {
+            equipmentObjectId: {
+              $convert: {
+                input: "$equipmentId",
+                to: "ObjectId",
+                onError: null,
+                onNull: null,
+              },
+            },
+          },
+        },
+        {
+          $lookup: {
+            from: "equipment",
+            localField: "equipmentObjectId",
+            foreignField: "_id",
+            as: "equipment",
+          },
+        },
+        {
+          $unwind: {
+            path: "$equipment",
+            preserveNullAndEmptyArrays: true,
+          },
+        },
+        {
+          $sort: {
+            createdAt: -1,
+          },
+        },
+        {
+          $project: {
+            customerId: 1,
+            customerName: 1,
+            customerEmail: 1,
+            contactNumber: 1,
+            deliveryAddress: 1,
+
+            equipmentId: 1,
+            equipmentName: 1,
+            equipmentImage: 1,
+
+            startDate: 1,
+            endDate: 1,
+            rentalDays: 1,
+            rentalType: 1,
+            quantity: 1,
+
+            totalAmount: 1,
+            currency: 1,
+
+            paymentStatus: 1,
+            status: 1,
+
+            createdAt: 1,
+            equipment: {
+              name: "$equipment.name",
+              category: "$equipment.category",
+              imageUrl: "$equipment.imageUrl",
+            },
+          },
+        },
+      ])
+      .toArray();
+
+    return res.status(200).send({
+      success: true,
+      count: rentals.length,
+      rentals,
+    });
+  } catch (error) {
+    console.error("Owner rentals error:", error);
+    return res.status(500).send({
+      success: false,
+      message: "Failed to fetch equipment rentals.",
+    });
+  }
+});
+
 // Admin-only access
 const verifyAdmin = (req, res, next) => {
   if (req.user?.role !== "admin") {
