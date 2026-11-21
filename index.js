@@ -1731,6 +1731,57 @@ app.post(
   }
 );
 
+// BOOKING HELPERS
+// Calculates rental units from the equipment rental type.
+const calculateRentalUnits = (startDate, endDate, rentalType) => {
+  const millisecondsPerDay = 24 * 60 * 60 * 1000;
+
+  // Both selected dates are inclusive
+  const rentalDays =
+    Math.floor((endDate.getTime() - startDate.getTime()) / millisecondsPerDay) +
+    1;
+  let rentalUnits;
+  if (rentalType === "daily") {
+    rentalUnits = rentalDays;
+  } else if (rentalType === "weekly") {
+    rentalUnits = Math.ceil(rentalDays / 7);
+  } else if (rentalType === "monthly") {
+    rentalUnits = Math.ceil(rentalDays / 30);
+  } else {
+    throw new Error("Unsupported rental type.");
+  }
+  return { rentalDays, rentalUnits };
+};
+// Find quantities reserved by overlapping bookings.
+
+const getReservedQuantity = async (equipmentId, startDate, endDate) => {
+  const now = new Date();
+  const overlappingBookings = await bookingsCollection
+    .find({
+      equipmentId,
+      startDate: { $lt: endDate },
+      endDate: { $gte: startDate },
+      $or: [
+        {
+          paymentStatus: "paid",
+          status: { $nin: ["cancelled", "rejected"] },
+        },
+        {
+          paymentStatus: "pending",
+          status: "pending",
+          checkoutExpiresAt: { $gt: now },
+        },
+      ],
+    })
+    .project({ quantity: 1 })
+    .toArray();
+
+  return overlappingBookings.reduce(
+    (total, booking) => total + Number(booking.quantity || 0),
+    0
+  );
+};
+
 // Get API Status
 app.get("/", (req, res) => {
   res.send({
