@@ -379,6 +379,106 @@ app.get("/api/profile", verifyToken, async (req, res) => {
   }
 });
 
+// Shared Profile — PATCH
+app.patch("/api/profile", verifyToken, async (req, res) => {
+  try {
+    const { name, phone, address, image } = req.body;
+    const updates = {};
+    if (name !== undefined) {
+      if (
+        typeof name !== "string" ||
+        name.trim().length < 2 ||
+        name.trim().length > 80
+      ) {
+        return res.status(400).send({
+          success: false,
+          message: "Name must be between 2 and 80 characters",
+        });
+      }
+      updates.name = name.trim();
+    }
+    if (phone !== undefined) {
+      if (typeof phone !== "string" || phone.length > 25) {
+        return res.status(400).send({
+          success: false,
+          message: "Invalid phone number",
+        });
+      }
+
+      updates.phone = phone.trim();
+    }
+    if (address !== undefined) {
+      if (typeof address !== "string" || address.length > 300) {
+        return res.status(400).send({
+          success: false,
+          message: "Address must be under 300 characters",
+        });
+      }
+
+      updates.address = address.trim();
+    }
+    if (image !== undefined) {
+      if (typeof image !== "string" || image.length > 2000) {
+        return res.status(400).send({
+          success: false,
+          message: "Invalid profile image URL",
+        });
+      }
+
+      if (image.trim()) {
+        try {
+          const parsedUrl = new URL(image.trim());
+
+          if (!["http:", "https:"].includes(parsedUrl.protocol)) {
+            throw new Error("Invalid protocol");
+          }
+        } catch {
+          return res.status(400).send({
+            success: false,
+            message: "Please provide a valid image URL",
+          });
+        }
+      }
+
+      updates.image = image.trim();
+    }
+    if (!Object.keys(updates).length) {
+      return res.status(400).send({
+        success: false,
+        message: "No valid profile fields provided",
+      });
+    }
+    const identityFilter = getProfileIdentityFilter(req.user);
+    if (!identityFilter) {
+      return res.status(401).send({
+        success: false,
+        message: "Unable to identify user",
+      });
+    }
+    updates.updatedAt = new Date();
+    const result = await usersCollection.updateOne(identityFilter, {
+      $set: updates,
+    });
+    if (!result.matchedCount) {
+      return res.status(404).send({
+        success: false,
+        message: "Profile not found",
+      });
+    }
+    res.status(200).send({
+      success: true,
+      message: "Profile updated successfully",
+    });
+  } catch (error) {
+    console.error("Update profile error:", error);
+
+    res.status(500).send({
+      success: false,
+      message: "Failed to update profile",
+    });
+  }
+});
+
 // Owner-only access
 const verifyOwner = (req, res, next) => {
   if (req.user?.role !== "owner") {
