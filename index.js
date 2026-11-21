@@ -725,6 +725,66 @@ app.get("/api/admin/users", verifyToken, verifyAdmin, async (req, res) => {
   }
 });
 
+// Change User Role — PATCH
+app.patch(
+  "/api/admin/users/:id/role",
+  verifyToken,
+  verifyAdmin,
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { role } = req.body;
+      const allowedRoles = ["customer", "owner", "admin"];
+      if (!allowedRoles.includes(role)) {
+        return res.status(400).send({
+          success: false,
+          message: "Invalid user role",
+        });
+      }
+      const targetUser = await usersCollection.findOne({
+        $or: [{ _id: ObjectId.isValid(id) ? new ObjectId(id) : null }, { id }],
+      });
+      if (!targetUser) {
+        return res.status(404).send({
+          success: false,
+          message: "User not found",
+        });
+      }
+      const currentAdmin = await usersCollection.findOne(
+        getAdminUserFilter(req.user) || { email: "__not_found__" }
+      );
+      const targetId = targetUser._id?.toString() || targetUser.id;
+
+      const adminId = currentAdmin?._id?.toString() || currentAdmin?.id;
+
+      if ((targetId = adminId)) {
+        return res.status(403).send({
+          success: false,
+          message: "You cannot change your own admin role",
+        });
+      }
+      await usersCollection.updateOne(
+        { _id: targetUser._id },
+        {
+          $set: {
+            role,
+            updatedAt: new Date(),
+          },
+        }
+      );
+      res.status(200).send({
+        success: true,
+        message: "User role updated successfully",
+      });
+    } catch (error) {
+      console.error("Change role error:", error);
+      res.status(500).send({
+        success: false,
+        message: "Failed to update user role",
+      });
+    }
+  }
+);
 // owner or Admin access
 const verifyOwnerOrAdmin = (req, res, next) => {
   if (!["owner", "admin"].includes(req.user?.role)) {
