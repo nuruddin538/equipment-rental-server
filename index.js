@@ -785,6 +785,49 @@ app.patch(
     }
   }
 );
+// Manage Users — DELETE
+app.delete(
+  "/api/admin/users/:id",
+  verifyToken,
+  verifyAdmin,
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const targetUser = await usersCollection.findOne({
+        $or: [{ _id: ObjectId.isValid(id) ? new ObjectId(id) : null }, { id }],
+      });
+      if (!targetUser) {
+        return res.status(404).send({
+          success: false,
+          message: "User not found",
+        });
+      }
+      const currentAdmin = await usersCollection.findOne(
+        getAdminUserFilter(req.user) || { email: "__not_found__" }
+      );
+      const targetId = targetUser._id?.toString() || targetUser.id;
+      const adminId = currentAdmin?._id?.toString() || currentAdmin?.id;
+
+      if (targetId === adminId) {
+        return res.status(403).send({
+          success: false,
+          message: "You cannot delete your own account",
+        });
+      }
+      await usersCollection.deleteOne({ _id: targetUser._id });
+      res.status(200).send({
+        success: true,
+        message: "User deleted successfully",
+      });
+    } catch (error) {
+      console.error("Delete user error:", error);
+      res.status(500).send({
+        success: false,
+        message: "Failed to delete user",
+      });
+    }
+  }
+);
 // owner or Admin access
 const verifyOwnerOrAdmin = (req, res, next) => {
   if (!["owner", "admin"].includes(req.user?.role)) {
