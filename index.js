@@ -901,6 +901,99 @@ app.patch(
   }
 );
 
+// Update Equipment — PATCH
+app.patch(
+  "/api/admin/equipment/:id",
+  verifyToken,
+  verifyAdmin,
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).send({
+          success: false,
+          message: "Invalid equipment ID.",
+        });
+      }
+      const allowedFields = [
+        "name",
+        "description",
+        "category",
+        "location",
+        "price",
+        "rentalType",
+        "availableQuantity",
+        "condition",
+        "brand",
+        "model",
+        "imageUrl",
+        "rentalTerms",
+      ];
+      const updates = {};
+
+      for (const field of allowedFields) {
+        if (req.body[field] !== undefined) {
+          updates[field] = req.body[field];
+        }
+      }
+      if (!Object.keys(updates).length) {
+        return res.status(400).send({
+          success: false,
+          message: "No valid fields provided",
+        });
+      }
+      if (
+        updates.price !== undefined &&
+        (!Number.isFinite(Number(updates.price)) || Number(updates.price) <= 0)
+      ) {
+        return res.status(400).send({
+          success: false,
+          message: "Price must be greater than zero",
+        });
+      }
+      if (updates.price !== undefined) {
+        updates.price = Number(updates.price);
+      }
+      if (updates.availableQuantity !== undefined) {
+        updates.availableQuantity = Number(updates.availableQuantity);
+
+        if (
+          !Number.isInteger(updates.availableQuantity) ||
+          updates.availableQuantity < 1
+        ) {
+          return res.status(400).send({
+            success: false,
+            message: "Quantity must be at least 1",
+          });
+        }
+      }
+      updates.updatedAt = new Date();
+      const result = await equipmentCollection.updateOne(
+        {
+          _id: new ObjectId(id),
+        },
+        { $set: updates }
+      );
+      if (!result.matchedCount) {
+        return res.status(404).send({
+          success: false,
+          message: "Equipment not found",
+        });
+      }
+      res.status(200).send({
+        success: true,
+        message: "Equipment updated successfully",
+      });
+    } catch (error) {
+      console.error("Admin equipment update error:", error);
+      res.status(500).send({
+        success: false,
+        message: "Failed to update equipment",
+      });
+    }
+  }
+);
+
 // owner or Admin access
 const verifyOwnerOrAdmin = (req, res, next) => {
   if (!["owner", "admin"].includes(req.user?.role)) {
