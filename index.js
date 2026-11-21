@@ -177,7 +177,116 @@ const getProfileIdentityFilter = (user) => {
   return conditions.length ? { $or: conditions } : null;
 };
 
-//
+// My Rentals — GET
+app.get(
+  "/api/customer/my-rentals",
+  verifyToken,
+  verifyCustomer,
+  async (req, res) => {
+    try {
+      const identityFilter = getCustomerIdentityFilter(req.user);
+      if (!identityFilter) {
+        return res.status(401).send({
+          success: false,
+          message: "Unable to identify customer",
+        });
+      }
+      const rentals = await bookingsCollection
+        .find(identityFilter)
+        .sort({ createdAt: -1 })
+        .toArray();
+      res.status(200).send({
+        success: true,
+        count: rentals.length,
+        rentals: rentals.map((rental) => ({
+          ...rental,
+          _id: rental._id.toString(),
+        })),
+      });
+    } catch (error) {
+      console.error("Customer rentals error:", error);
+
+      res.status(500).send({
+        success: false,
+        message: "Failed to fetch your rentals",
+      });
+    }
+  }
+);
+
+// Favorites — GET
+app.get(
+  "/api/customer/favorites",
+  verifyToken,
+  verifyCustomer,
+  async (req, res) => {
+    try {
+      const identityFilter = getFavoriteIdentityFilter(req.user);
+      if (!identityFilter) {
+        return res.status(401).send({
+          success: false,
+          message: "Unable to identify customer",
+        });
+      }
+      const favorites = await favoritesCollection
+        .find(identityFilter)
+        .sort({ createdAt: -1 })
+        .toArray();
+
+      const equipmentIds = favorites
+        .map((favorite) => favorite.equipmentId)
+        .filter(Boolean);
+
+      const objectIds = equipmentIds
+        .filter((id) => ObjectId.isValid(String(id)))
+        .map((id) => new ObjectId(String(id)));
+
+      const stringIds = equipmentIds.map(String);
+
+      const equipment = equipmentCollection
+        .find({
+          $or: [{ _id: { $in: objectIds } }, { id: { $in: stringIds } }],
+        })
+        .toArray();
+
+      const equipmentMap = new Map();
+
+      equipment.forEach((item) => {
+        equipmentMap.set(item._id.toString(), item);
+        if (item.id) equipmentMap.set(String(item.id), item);
+      });
+
+      const result = favorites
+        .map((favorite) => {
+          const item = equipmentMap.get(String(favorite.equipmentId));
+          if (!item) return null;
+          return {
+            _id: favorite._id.toString(),
+            favoriteId: favorite._id.toString(),
+            createdAt: favorite.createdAt,
+            equipment: {
+              ...item,
+              _id: item._id.toString(),
+            },
+          };
+        })
+        .filter(Boolean);
+
+      res.status(200).send({
+        success: true,
+        count: result.length,
+        favorites: result,
+      });
+    } catch (error) {
+      console.error("Customer favorites error:", error);
+
+      res.status(500).send({
+        success: false,
+        message: "Failed to fetch favorites",
+      });
+    }
+  }
+);
 
 // Owner-only access
 const verifyOwner = (req, res, next) => {
