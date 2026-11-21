@@ -828,6 +828,28 @@ app.delete(
     }
   }
 );
+
+// All Equipment — GET
+app.get("/api/admin/equipment", verifyToken, verifyAdmin, async (req, res) => {
+  try {
+    const equipment = await equipmentCollection
+      .find({})
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    res.status(200).send({
+      success: true,
+      count: equipment.length,
+      equipment,
+    });
+  } catch (error) {
+    console.error("Admin equipment error:", error);
+    res.status(500).send({
+      success: false,
+      message: "Failed to fetch equipment",
+    });
+  }
+});
 // owner or Admin access
 const verifyOwnerOrAdmin = (req, res, next) => {
   if (!["owner", "admin"].includes(req.user?.role)) {
