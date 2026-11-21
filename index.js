@@ -850,6 +850,57 @@ app.get("/api/admin/equipment", verifyToken, verifyAdmin, async (req, res) => {
     });
   }
 });
+// Approve / Reject Equipment — PATCH
+app.patch(
+  "/api/admin/equipment/:id/status",
+  verifyToken,
+  verifyAdmin,
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { status } = req.body;
+      const allowedStatuses = ["pending", "approved", "rejected"];
+      if (!allowedStatuses.includes(status)) {
+        return res.status(400).send({
+          success: false,
+          message: "Invalid equipment status",
+        });
+      }
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).send({
+          success: false,
+          message: "Invalid equipment ID.",
+        });
+      }
+      const result = await equipmentCollection.updateOne(
+        { _id: new ObjectId(id) },
+        {
+          $set: {
+            status,
+            updatedAt: new Date(),
+          },
+        }
+      );
+      if (!result.matchedCount) {
+        return res.status(404).send({
+          success: false,
+          message: "Equipment not found",
+        });
+      }
+      res.status(200).send({
+        success: true,
+        message: `Equipment ${status} successfully`,
+      });
+    } catch (error) {
+      console.error("Equipment status error:", error);
+      res.status(500).send({
+        success: false,
+        message: "Failed to update equipment status",
+      });
+    }
+  }
+);
+
 // owner or Admin access
 const verifyOwnerOrAdmin = (req, res, next) => {
   if (!["owner", "admin"].includes(req.user?.role)) {
