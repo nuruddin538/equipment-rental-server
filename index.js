@@ -1110,6 +1110,98 @@ app.patch(
   }
 );
 
+// Admin Profile — GET / PATCH
+app.get("/api/admin/profile", verifyToken, verifyAdmin, async (req, res) => {
+  try {
+    const user = await usersCollection.findOne(
+      getAdminUserFilter(req.user) || { email: "__not_found__" },
+      {
+        projection: {
+          name: 1,
+          email: 1,
+          role: 1,
+          image: 1,
+          phone: 1,
+          createdAt: 1,
+        },
+      }
+    );
+    if (!user) {
+      return res.status(404).send({
+        success: false,
+        message: "Admin profile not found",
+      });
+    }
+    res.status(200).send({
+      success: true,
+      profile: {
+        ...user,
+        _id: user._id?.toString() || user.id,
+      },
+    });
+  } catch (error) {
+    console.error("Admin profile error:", error);
+    res.status(500).send({
+      success: false,
+      message: "Failed to fetch profile",
+    });
+  }
+});
+
+app.patch("/api/admin/profile", verifyToken, verifyAdmin, async (req, res) => {
+  try {
+    const { name, phone, image } = req.body;
+    const updates = {};
+    if (name !== undefined) {
+      if (typeof name !== "string" || name.trim().length < 2) {
+        return res.status(400).send({
+          success: false,
+          message: "Name must contain at least 2 characters",
+        });
+      }
+      updates.name = name.trim();
+    }
+    if (phone !== undefined) {
+      updates.phone = String(phone).trim();
+    }
+
+    if (image !== undefined) {
+      updates.image = String(image).trim();
+    }
+    if (!Object.keys(updates).length) {
+      return res.status(400).send({
+        success: false,
+        message: "No profile fields provided",
+      });
+    }
+    updates.updatedAt = new Date();
+
+    const filter = getAdminUserFilter(req.user);
+    if (!filter) {
+      return res.status(401).send({
+        success: false,
+        message: "Unable to identify admin",
+      });
+    }
+    const result = await usersCollection.updateOne(filter, { $set: updates });
+    if (!result.matchedCount) {
+      return res.status(404).send({
+        success: false,
+        message: "Admin profile not found",
+      });
+    }
+    res.status(200).send({
+      success: true,
+      message: "Profile updated successfully",
+    });
+  } catch (error) {
+    console.error("Admin profile update error:", error);
+    res.status(500).send({
+      success: false,
+      message: "Failed to update profile",
+    });
+  }
+});
 // owner or Admin access
 const verifyOwnerOrAdmin = (req, res, next) => {
   if (!["owner", "admin"].includes(req.user?.role)) {
