@@ -233,6 +233,14 @@ app.get(
         .sort({ createdAt: -1 })
         .toArray();
 
+      if (!favorites.length) {
+        return res.status(200).send({
+          success: true,
+          count: 0,
+          favorites: [],
+        });
+      }
+
       const equipmentIds = favorites
         .map((favorite) => favorite.equipmentId)
         .filter(Boolean);
@@ -241,13 +249,27 @@ app.get(
         .filter((id) => ObjectId.isValid(String(id)))
         .map((id) => new ObjectId(String(id)));
 
-      const stringIds = equipmentIds.map(String);
+      const stringIds = equipmentIds.map((id) => String(id));
 
       const equipment = equipmentCollection
         .find({
           $or: [{ _id: { $in: objectIds } }, { id: { $in: stringIds } }],
         })
         .toArray();
+
+      // Fetch equipment documents
+      const equipmentDocs = await equipmentCollection
+        .find({
+          $or: [{ _id: { $in: objectIds } }, { id: { $in: stringIds } }],
+        })
+        .toArray();
+
+      // Validate MongoDB result
+      if (!Array.isArray(equipmentDocs)) {
+        console.error("Expected equipment array, received:", equipmentDocs);
+
+        throw new Error("Equipment query did not return an array");
+      }
 
       const equipmentMap = new Map();
 
@@ -1113,7 +1135,7 @@ app.patch(
 
       const adminId = currentAdmin?._id?.toString() || currentAdmin?.id;
 
-      if ((targetId = adminId)) {
+      if (targetId === adminId) {
         return res.status(403).send({
           success: false,
           message: "You cannot change your own admin role",
@@ -1592,6 +1614,122 @@ app.get("/api/equipment/featured", async (req, res) => {
     });
   }
 });
+
+// EQUIPMENT DETAILS — GET
+app.get("/api/equipment/:id", verifyToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).send({
+        success: false,
+        message: "Invalid equipment ID.",
+      });
+    }
+    const equipment = await equipmentCollection.findOne({
+      _id: new ObjectId(id),
+    });
+    if (!equipment) {
+      return res.status(404).send({
+        success: false,
+        message: "Equipment not found.",
+      });
+    }
+    // Customers can only view approved equipment.
+    // Owners can view their own equipment.
+    // Admins can view all equipment.
+    const canView =
+      equipment.status === "approved" ||
+      (req.user.role === "owner" && equipment.ownerId === req.user.id) ||
+      req.user.role === "admin";
+    if (!canView) {
+      return res.status(403).send({
+        success: false,
+        message: "You cannot view this equipment.",
+      });
+    }
+    return res.status(200).send({
+      success: true,
+      equipment: {
+        ...equipment,
+        _id: equipment._id.toString(),
+      },
+    });
+  } catch (error) {
+    console.error("Equipment details error:", error);
+
+    return res.status(500).send({
+      success: false,
+      message: "Failed to fetch equipment details.",
+    });
+  }
+});
+
+// ADD TO FAVORITES - POST
+app.post(
+  "/api/customer/favorites",
+  verifyToken,
+  verifyCustomer,
+  async (req, res) => {
+    try {
+      const { equipmentId } = req.body;
+      if (!equipmentId || !ObjectId.isValid(equipmentId)) {
+        return res.status(400).send({
+          success: false,
+          message: "valid equipment ID is required.",
+        });
+      }
+      const equipment = await equipmentCollection.findOne({
+        _id: new ObjectId(equipmentId),
+        status: "approved",
+      });
+      if (!equipment) {
+        return res.status(404).send({
+          success: false,
+          message: "Approve equipment not found.",
+        });
+      }
+      const identityFilter = getFavoriteIdentityFilter(req.user);
+      if (!identityFilter) {
+        return res.status(401).send({
+          success: false,
+          message: "Unable to identify customer",
+        });
+      }
+      const existingFavorite = await favoritesCollection.findOne({
+        $and: [identityFilter, { equipmentId: equipment._id.toString() }],
+      });
+      if (existingFavorite) {
+        return res.status(200).send({
+          success: true,
+          message: "Equipment is already in your favorites.",
+          favoriteId: existingFavorite._id.toString(),
+        });
+      }
+      const favorite = {
+        userId: req.user.id,
+        customerId: req.user.id,
+        userEmail: req.user.email.toLowerCase(),
+        customerEmail: req.user.email.toLowerCase(),
+        equipmentId: equipment._id.toString(),
+        createdAt: new Date(),
+      };
+      const result = await favoritesCollection.insertOne(favorite);
+
+      return res.status(201).send({
+        success: true,
+        message: "Equipment added to favorites",
+        favoriteId: result.insertedId.toString(),
+      });
+    } catch (error) {
+      console.error("Add favorite error:", error);
+
+      return res.status(500).send({
+        success: false,
+        message: "Failed to add equipment to favorites.",
+      });
+    }
+  }
+);
 
 // Get API Status
 app.get("/", (req, res) => {
