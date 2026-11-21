@@ -123,6 +123,62 @@ const verifyCustomer = (req, res, next) => {
   next();
 };
 
+// Customer helper
+const getCustomerIdentityFilter = (user) => {
+  const conditions = [];
+
+  if (user?.id) {
+    conditions.push({ customerId: user.id }, { userId: user.id });
+  }
+  if (user?.email) {
+    conditions.push({
+      customerEmail: user.email.toLowerCase(),
+    });
+
+    conditions.push({
+      userEmail: user.email.toLowerCase(),
+    });
+  }
+  return conditions.length ? { $or: conditions } : null;
+};
+
+const getFavoriteIdentityFilter = (user) => {
+  const conditions = [];
+  if (user?.id) {
+    conditions.push({ userId: user.id }, { customerId: user.id });
+  }
+  if (user?.email) {
+    conditions.push({
+      userEmail: user.email.toLowerCase(),
+    });
+
+    conditions.push({
+      customerEmail: user.email.toLowerCase(),
+    });
+  }
+  return conditions.length ? { $or: conditions } : null;
+};
+
+const getProfileIdentityFilter = (user) => {
+  const conditions = [];
+
+  if (user?.id) {
+    conditions.push(
+      { id: user.id },
+      ...(ObjectId.isValid(user.id) ? [{ _id: new ObjectId(user.id) }] : [])
+    );
+  }
+  if (user?.email) {
+    conditions.push({
+      email: user.email.toLowerCase(),
+    });
+  }
+
+  return conditions.length ? { $or: conditions } : null;
+};
+
+//
+
 // Owner-only access
 const verifyOwner = (req, res, next) => {
   if (req.user?.role !== "owner") {
