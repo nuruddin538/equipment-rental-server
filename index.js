@@ -1752,6 +1752,7 @@ const calculateRentalUnits = (startDate, endDate, rentalType) => {
   }
   return { rentalDays, rentalUnits };
 };
+
 // Find quantities reserved by overlapping bookings.
 
 const getReservedQuantity = async (equipmentId, startDate, endDate) => {
@@ -1781,6 +1782,427 @@ const getReservedQuantity = async (equipmentId, startDate, endDate) => {
     0
   );
 };
+
+// CREATE STRIPE CHECKOUT — POST
+
+app.post(
+  "/api/bookings/checkout",
+  verifyToken,
+  verifyCustomer,
+  async (req, res) => {
+    let bookingId;
+    try {
+      const {
+        equipmentId,
+        startDate,
+        endDate,
+        quantity,
+        contactNumber,
+        deliveryAddress,
+        additionalNotes = "",
+      } = req.body;
+
+      if (!ObjectId.isValid(equipmentId)) {
+        return res.status(400).send({
+          success: false,
+          message: "Invalid equipment ID.",
+        });
+      }
+
+      if (
+        !startDate ||
+        !endDate ||
+        !Number.isInteger(Number(quantity)) ||
+        Number(quantity) < 1 ||
+        !contactNumber?.trim() ||
+        !deliveryAddress?.trim()
+      ) {
+        return res.status(400).send({
+          success: false,
+          message: "Please provide all required booking information.",
+        });
+      }
+      if (
+        typeof additionalNotes !== "string" ||
+        additionalNotes.length > 1000
+      ) {
+        return res.status(400).send({
+          success: false,
+          message: "Additional notes must be under 1000 characters.",
+        });
+      }
+      const equipment = await equipmentCollection.findOne({
+        _id: new ObjectId(equipmentId),
+        status: "approved",
+      });
+
+      if (!equipment) {
+        return res.status(404).send({
+          success: false,
+          message: "Approved equipment not found.",
+        });
+      }
+      const start = new Date(`${startDate}T00:00:00.000Z`);
+      const end = new Date(`${endDate}T00:00:00.000Z`);
+      const today = new Date();
+      today.setUTCHours(0, 0, 0, 0);
+      if (
+        Number.isNaN(start.getTime()) ||
+        Number.isNaN(end.getTime()) ||
+        start < today ||
+        end < start
+      ) {
+        return res.status(400).send({
+          success: false,
+          message: "Please select valid rental dates.",
+        });
+      }
+      const requestedQuantity = Number(quantity);
+
+      const reservedQuantity = await getReservedQuantity(
+        equipment._id.toString(),
+        start,
+        end
+      );
+
+      const availableQuantity =
+        Number(equipment.availableQuantity) - reservedQuantity;
+
+      if (requestedQuantity > availableQuantity) {
+        return res.status(409).send({
+          success: false,
+          message: `Only ${Math.max(
+            availableQuantity,
+            0
+          )} item(s) are available for these dates.`,
+        });
+      }
+      const { rentalDays, rentalUnits } = calculateRentalUnits(
+        start,
+        end,
+        equipment.rentalType
+      );
+      const unitPrice = Number(equipment.price);
+
+      if (!Number.isFinite(unitPrice) || unitPrice <= 0) {
+        return res.status(400).send({
+          success: false,
+          message: "Invalid equipment rental price.",
+        });
+      }
+
+      const totalAmount =
+        Math.round(unitPrice * rentalUnits * requestedQuantity * 100) / 100;
+
+      const currency = (process.env.STRIPE_CURRENCY || "usd").toLowerCase();
+      const now = new Date();
+      const expiresAt = new Date(now.getTime() + 30 * 60 * 1000);
+
+      // Create a pending booking before redirecting to Stripe.
+      const booking = {
+        equipmentId: equipment._id.toString(),
+        equipmentName: equipment.name,
+        equipmentImage: equipment.imageUrl || "",
+        ownerId: equipment.ownerId,
+        ownerName: equipment.ownerName || "",
+        ownerEmail: equipment.ownerEmail || "",
+
+        customerId: req.user.id,
+        customerName: req.user.name || "",
+        customerEmail: req.user.email.toLowerCase(),
+
+        startDate: start,
+        endDate: end,
+        rentalDays,
+        rentalUnits,
+        rentalType: equipment.rentalType,
+        quantity: requestedQuantity,
+
+        unitPrice,
+        totalAmount,
+        currency,
+
+        contactNumber: contactNumber.trim(),
+        deliveryAddress: deliveryAddress.trim(),
+        additionalNotes: additionalNotes.trim(),
+
+        paymentStatus: "pending",
+        status: "pending",
+
+        checkoutExpiresAt: expiresAt,
+        stripeSessionId: null,
+
+        createdAt: now,
+        updatedAt: now,
+      };
+      const bookingResult = await bookingsCollection.insertOne(booking);
+      bookingId = bookingResult.insertedId;
+      const frontendUrl = process.env.CLIENT_URL?.replace(/\/$/, "");
+
+      if (!frontendUrl) {
+        throw new Error("CLIENT_URL is not configured.");
+      }
+
+      const checkoutSession = await stripe.checkout.sessions.create({
+        mode: "payment",
+        customer_email: req.user.email,
+        line_items: [
+          {
+            price_data: {
+              currency,
+              product_data: {
+                name: equipment.name,
+                description: `${rentalDays} day(s), ${requestedQuantity} item(s)`,
+                ...(equipment.imageUrl ? { images: [equipment.imageUrl] } : {}),
+              },
+              unit_amount: Math.round(unitPrice * 100),
+            },
+            quantity: rentalUnits * requestedQuantity,
+          },
+        ],
+        metadata: {
+          bookingId: bookingId.toString(),
+          equipmentId: equipment._id.toString(),
+          customerId: req.user.id,
+        },
+        expires_at: Math.floor(expiresAt.getTime() / 1000),
+
+        success_url: `${frontendUrl}/payment/success?session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${frontendUrl}/equipment/${equipment._id.toString()}?payment=cancelled`,
+      });
+
+      await bookingsCollection.updateOne(
+        {
+          _id: bookingId,
+        },
+        {
+          $set: {
+            stripeSessionId: checkoutSession.id,
+            updatedAt: new Date(),
+          },
+        }
+      );
+      return res.status(201).send({
+        success: true,
+        message: "Checkout session created successfully.",
+        bookingId: bookingId.toString(),
+        checkoutUrl: checkoutSession.url,
+        totalAmount,
+        currency,
+      });
+    } catch (error) {
+      console.error("Create checkout error:", error);
+      if (bookingId) {
+        await bookingsCollection.updateOne(
+          { _id: bookingId, paymentStatus: "pending" },
+          {
+            $set: {
+              paymentStatus: "failed",
+              status: "cancelled",
+              updatedAt: new Date(),
+            },
+          }
+        );
+      }
+      return res.status(500).send({
+        success: false,
+        message: "Unable to create payment session.",
+      });
+    }
+  }
+);
+
+// STRIPE WEBHOOK
+app.post("/api/stripe/webhook", async (req, res) => {
+  const signature = req.headers["stripe-signature"];
+  let event;
+  try {
+    event = stripe.webhooks.constructEvent(
+      req.rawBody,
+      signature,
+      process.env.STRIPE_WEBHOOK_SECRET
+    );
+  } catch (error) {
+    console.error("Stripe webhook signature error:", error.message);
+
+    return res.status(400).send({
+      success: false,
+      message: "Invalid Stripe webhook signature.",
+    });
+  }
+  try {
+    if (
+      event.type === "checkout.session.completed" ||
+      event.type === "checkout.session.async_payment_succeeded"
+    ) {
+      const session = event.data.object;
+
+      if (session.payment_status !== "paid") {
+        return res.status(200).send({ received: true });
+      }
+
+      const bookingId = session.metadata?.bookingId;
+
+      if (!bookingId || !ObjectId.isValid(bookingId)) {
+        console.error("Invalid booking ID in Stripe metadata.");
+        return res.status(200).send({ received: true });
+      }
+
+      const bookingObjectId = new ObjectId(bookingId);
+
+      const booking = await bookingsCollection.findOne({
+        _id: bookingObjectId,
+      });
+
+      if (!booking) {
+        console.error("Booking not found:", bookingId);
+        return res.status(200).send({ received: true });
+      }
+
+      // Idempotency: do not process an already-paid booking again.
+      if (booking.paymentStatus !== "paid") {
+        const paymentIntentId =
+          typeof session.payment_intent === "string"
+            ? session.payment_intent
+            : session.payment_intent?.id || null;
+
+        const transaction = {
+          bookingId: bookingId,
+          equipmentId: booking.equipmentId,
+          customerId: booking.customerId,
+          customerEmail: booking.customerEmail,
+
+          stripeSessionId: session.id,
+          stripePaymentIntentId: paymentIntentId,
+
+          amountTotal: session.amount_total,
+          currency: session.currency,
+
+          paymentStatus: "paid",
+          paymentMethod: "stripe",
+
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        };
+
+        await paymentsCollection.updateOne(
+          { stripeSessionId: session.id },
+          {
+            $setOnInsert: transaction,
+          },
+          { upsert: true }
+        );
+
+        await bookingsCollection.updateOne(
+          {
+            _id: bookingObjectId,
+            paymentStatus: { $ne: "paid" },
+          },
+          {
+            $set: {
+              paymentStatus: "paid",
+              status: "confirmed",
+              stripeSessionId: session.id,
+              stripePaymentIntentId: paymentIntentId,
+              paidAt: new Date(),
+              updatedAt: new Date(),
+            },
+          }
+        );
+      }
+    }
+
+    if (event.type === "checkout.session.expired") {
+      const session = event.data.object;
+      const bookingId = session.metadata?.bookingId;
+
+      if (bookingId && ObjectId.isValid(bookingId)) {
+        await bookingsCollection.updateOne(
+          {
+            _id: new ObjectId(bookingId),
+            paymentStatus: "pending",
+          },
+          {
+            $set: {
+              paymentStatus: "expired",
+              status: "cancelled",
+              updatedAt: new Date(),
+            },
+          }
+        );
+      }
+    }
+
+    if (event.type === "checkout.session.async_payment_failed") {
+      const session = event.data.object;
+      const bookingId = session.metadata?.bookingId;
+
+      if (bookingId && ObjectId.isValid(bookingId)) {
+        await bookingsCollection.updateOne(
+          {
+            _id: new ObjectId(bookingId),
+            paymentStatus: "pending",
+          },
+          {
+            $set: {
+              paymentStatus: "failed",
+              status: "cancelled",
+              updatedAt: new Date(),
+            },
+          }
+        );
+      }
+    }
+
+    return res.status(200).send({ received: true });
+  } catch (error) {
+    console.error("Stripe webhook processing error:", error);
+
+    // Non-2xx response tells Stripe to retry the webhook.
+    return res.status(500).send({
+      success: false,
+      message: "Webhook processing failed.",
+    });
+  }
+});
+// GET BOOKING DETAILS — CUSTOMER
+app.get("/api/bookings/:id", verifyToken, verifyCustomer, async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).send({
+        success: false,
+        message: "Invalid booking ID.",
+      });
+    }
+    const booking = await bookingsCollection.findOne({
+      _id: new ObjectId(id),
+      customerId: req.user.id,
+    });
+
+    if (!booking) {
+      return res.status(404).send({
+        success: false,
+        message: "Booking not found.",
+      });
+    }
+
+    return res.status(200).send({
+      success: true,
+      booking: {
+        ...booking,
+        _id: booking._id.toString(),
+      },
+    });
+  } catch (error) {
+    console.error("Get booking error:", error);
+
+    return res.status(500).send({
+      success: false,
+      message: "Failed to fetch booking.",
+    });
+  }
+});
 
 // Get API Status
 app.get("/", (req, res) => {
