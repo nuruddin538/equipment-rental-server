@@ -1030,6 +1030,26 @@ app.delete(
     }
   }
 );
+// All Rentals — GET
+app.get("/api/admin/restals", verifyToken, verifyAdmin, async (req, res) => {
+  try {
+    const rentals = await bookingsCollection
+      .find({})
+      .sort({ createdAt: -1 })
+      .toArray();
+    res.status(200).send({
+      success: true,
+      count: rentals.length,
+      rentals,
+    });
+  } catch (error) {
+    console.error("Admin rentals error:", error);
+    res.status(500).send({
+      success: false,
+      message: "Failed to fetch rentals",
+    });
+  }
+});
 
 // owner or Admin access
 const verifyOwnerOrAdmin = (req, res, next) => {
