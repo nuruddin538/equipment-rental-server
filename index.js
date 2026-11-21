@@ -161,7 +161,7 @@ const validateEquipmentData = (data) => {
     brand,
     model,
     imageUrl,
-    rentalItems,
+    rentalTerms,
   } = data;
 
   if (
@@ -203,6 +203,25 @@ const validateEquipmentData = (data) => {
   }
   return null;
 };
+
+// Admin helper functions
+const getAdminUserId = (user) => {
+  return user?.id || user?._id?.toString() || "";
+};
+
+const getAdminUserFilter = (user) => {
+  const conditions = [];
+  if (user?.id) {
+    conditions.push({ _id: user.id }, { id: user.id });
+  }
+  if (user?.email) {
+    conditions.push({ email: user.email.toLowerCase() });
+  }
+  return conditions.length ? { $or: conditions } : null;
+};
+const getEquipmentOwnerFilter = (equipment) => ({
+  $or: [{ ownerId: equipment.ownerId }, { ownerEmail: equipment.ownerEmail }],
+});
 
 // OWNER DASHBOARD: ADD EQUIPMENT
 app.post("/api/owner/equipment", verifyToken, verifyOwner, async (req, res) => {
@@ -671,6 +690,40 @@ const verifyAdmin = (req, res, next) => {
   }
   next();
 };
+
+// All Users — GET/Admin
+app.get("/api/admin/users", verifyToken, verifyAdmin, async (req, res) => {
+  try {
+    const users = await usersCollection
+      .find({})
+      .project({
+        name: 1,
+        email: 1,
+        role: 1,
+        image: 1,
+        createdAt: 1,
+        updatedAt: 1,
+      })
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    res.status(200).send({
+      success: true,
+      count: users.length,
+      users: users.map((user) => ({
+        ...user,
+        _id: user._id?.toString() || user.id,
+        role: user.role || "customer",
+      })),
+    });
+  } catch (error) {
+    console.error("Admin users error:", error);
+    res.status(500).send({
+      success: false,
+      message: "Failed to fetch users",
+    });
+  }
+});
 
 // owner or Admin access
 const verifyOwnerOrAdmin = (req, res, next) => {
