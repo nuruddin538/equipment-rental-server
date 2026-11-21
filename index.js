@@ -288,6 +288,51 @@ app.get(
   }
 );
 
+// Remove Favorite — DELETE
+app.delete(
+  "/api/customer/favorites/:id",
+  verifyToken,
+  verifyCustomer,
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).send({
+          success: false,
+          message: "Invalid favorite ID",
+        });
+      }
+      const identityFilter = getFavoriteIdentityFilter(req.user);
+      if (!identityFilter) {
+        return res.status(401).send({
+          success: false,
+          message: "Unable to identify customer",
+        });
+      }
+      const result = await favoritesCollection.deleteOne({
+        $and: [{ _id: new ObjectId(id) }, identityFilter],
+      });
+      if (!result.deletedCount) {
+        return res.status(404).send({
+          success: false,
+          message: "Favorite not found",
+        });
+      }
+      res.status(200).send({
+        success: true,
+        message: "Favorite removed successfully",
+      });
+    } catch (error) {
+      console.error("Remove favorite error:", error);
+
+      res.status(500).send({
+        success: false,
+        message: "Failed to remove favorite",
+      });
+    }
+  }
+);
+
 // Owner-only access
 const verifyOwner = (req, res, next) => {
   if (req.user?.role !== "owner") {
