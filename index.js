@@ -332,6 +332,52 @@ app.delete(
     }
   }
 );
+// Shared Profile — GET
+app.get("/api/profile", verifyToken, async (req, res) => {
+  try {
+    const identityFilter = getProfileIdentityFilter(req.user);
+    if (!identityFilter) {
+      return res.status(401).send({
+        success: false,
+        message: "Unable to identify user",
+      });
+    }
+    const profile = await usersCollection.findOne(identityFilter, {
+      projection: {
+        name: 1,
+        email: 1,
+        role: 1,
+        image: 1,
+        phone: 1,
+        address: 1,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    });
+    if (!profile) {
+      return res.status(404).send({
+        success: false,
+        message: "Profile not found",
+      });
+    }
+
+    res.status(200).send({
+      success: true,
+      profile: {
+        ...profile,
+        _id: profile._id?.toString() || profile.id,
+        role: profile.role || "customer",
+      },
+    });
+  } catch (error) {
+    console.error("Get profile error:", error);
+
+    res.status(500).send({
+      success: false,
+      message: "Failed to fetch profile",
+    });
+  }
+});
 
 // Owner-only access
 const verifyOwner = (req, res, next) => {
