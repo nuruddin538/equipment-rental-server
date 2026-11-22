@@ -63,7 +63,12 @@ const verifyToken = async (req, res, next) => {
   }
   const token = authorization.split(" ")[1];
   const { payload } = await jwtVerify(token, JWKS);
-
+  if (!payload) {
+    return res.status(401).send({
+      success: false,
+      message: "payload not found",
+    });
+  }
   // Better Auth JWT normally includes the user's ID in "sub"
   const userId = payload.sub;
   const email = payload.email;
