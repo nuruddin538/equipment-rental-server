@@ -53,65 +53,65 @@ const JWKS = createRemoteJWKSet(
 
 // Verify JWT and load the current user from MongoDB
 const verifyToken = async (req, res, next) => {
-  try {
-    const authorization = req.headers.authorization;
-    if (!authorization || !authorization.startsWith("Bearer ")) {
-      return res.status(401).send({
-        success: false,
-        message: "Unauthorized access. Token is required.",
-      });
-    }
-    const token = authorization.split(" ")[1];
-    const { payload } = await jwtVerify(token, JWKS);
-
-    // Better Auth JWT normally includes the user's ID in "sub"
-    const userId = payload.sub;
-    const email = payload.email;
-
-    if (!userId && !email) {
-      return res.status(401).send({
-        success: false,
-        message: "Invalid token payload",
-      });
-    }
-    let user = null;
-    if (userId && ObjectId.isValid(userId)) {
-      user = await usersCollection.findOne({
-        _id: new ObjectId(userId),
-      });
-    }
-    if (!user && userId) {
-      user = await usersCollection.findOne({
-        id: userId,
-      });
-    }
-    if (!user && email) {
-      user = await usersCollection.findOne({
-        email: email.toLowerCase(),
-      });
-    }
-    if (!user) {
-      return res.status(401).send({
-        success: false,
-        message: "User not found.",
-      });
-    }
-    // Attach verified user information to the request
-    req.user = {
-      id: user._id.toString(),
-      name: user.name,
-      email: user.email,
-      role: user.role || "customer",
-      image: user.image || "",
-    };
-    next();
-  } catch (error) {
-    console.error("JWT verification error:", error.message);
+  // try {
+  const authorization = req.headers.authorization;
+  if (!authorization || !authorization.startsWith("Bearer ")) {
     return res.status(401).send({
       success: false,
-      message: "Invalid or expired authentication token.",
+      message: "Unauthorized access. Token is required.",
     });
   }
+  const token = authorization.split(" ")[1];
+  const { payload } = await jwtVerify(token, JWKS);
+
+  // Better Auth JWT normally includes the user's ID in "sub"
+  const userId = payload.sub;
+  const email = payload.email;
+
+  if (!userId && !email) {
+    return res.status(401).send({
+      success: false,
+      message: "Invalid token payload",
+    });
+  }
+  let user = null;
+  if (userId && ObjectId.isValid(userId)) {
+    user = await usersCollection.findOne({
+      _id: new ObjectId(userId),
+    });
+  }
+  if (!user && userId) {
+    user = await usersCollection.findOne({
+      id: userId,
+    });
+  }
+  if (!user && email) {
+    user = await usersCollection.findOne({
+      email: email.toLowerCase(),
+    });
+  }
+  if (!user) {
+    return res.status(401).send({
+      success: false,
+      message: "User not found.",
+    });
+  }
+  // Attach verified user information to the request
+  req.user = {
+    id: user._id.toString(),
+    name: user.name,
+    email: user.email,
+    role: user.role || "customer",
+    image: user.image || "",
+  };
+  next();
+  // } catch (error) {
+  //   console.error("JWT verification error:", error.message);
+  //   return res.status(401).send({
+  //     success: false,
+  //     message: "Invalid or expired authentication token.",
+  //   });
+  // }
 };
 
 // SECTION 7: ROLE-BASED AUTHORIZATION
