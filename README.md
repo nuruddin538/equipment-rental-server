@@ -6,8 +6,8 @@ The backend provides secure API endpoints for customers, equipment owners, and a
 
 ## 🌐 Live Demo
 
-🔗 [Frontend Live Site](https://impactora-frontend.vercel.app/)
-🔗 [Backend Live Site](https://impactora-backend.vercel.app/)
+🔗 [Frontend Live Site](https://equipment-rental-client-ecru.vercel.app)
+🔗 [Backend Live Site](https://equipment-rental-server-ebon.vercel.app)
 
 ## 📂 Github Repository
 
