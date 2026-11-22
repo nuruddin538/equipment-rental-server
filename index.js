@@ -873,6 +873,7 @@ app.delete(
 );
 
 //OWNER DASHBOARD: MY EQUIPMENT RENTALS
+
 app.get("/api/owner/rentals", verifyToken, verifyOwner, async (req, res) => {
   try {
     const rentals = await bookingsCollection
@@ -887,7 +888,7 @@ app.get("/api/owner/rentals", verifyToken, verifyOwner, async (req, res) => {
             equipmentObjectId: {
               $convert: {
                 input: "$equipmentId",
-                to: "ObjectId",
+                to: "objectId",
                 onError: null,
                 onNull: null,
               },
@@ -938,6 +939,7 @@ app.get("/api/owner/rentals", verifyToken, verifyOwner, async (req, res) => {
             status: 1,
 
             createdAt: 1,
+
             equipment: {
               name: "$equipment.name",
               category: "$equipment.category",
@@ -954,10 +956,18 @@ app.get("/api/owner/rentals", verifyToken, verifyOwner, async (req, res) => {
       rentals,
     });
   } catch (error) {
+    // console.error("Owner rentals error:", error);
+
+    // return res.status(500).send({
+    //   success: false,
+    //   message: "Failed to fetch equipment rentals.",
+    // });
     console.error("Owner rentals error:", error);
-    return res.status(500).send({
+
+    return res.status(500).json({
       success: false,
       message: "Failed to fetch equipment rentals.",
+      error: error.message, // Development debugging
     });
   }
 });
@@ -1411,23 +1421,54 @@ app.delete(
     }
   }
 );
-// All Rentals — GET
-app.get("/api/admin/restals", verifyToken, verifyAdmin, async (req, res) => {
+
+// Amdin Rentals - GET
+app.get("/api/admin/rentals", verifyToken, verifyAdmin, async (req, res) => {
   try {
     const rentals = await bookingsCollection
-      .find({})
-      .sort({ createdAt: -1 })
+      .aggregate([
+        {
+          $lookup: {
+            from: "equipment",
+            let: { equipmentId: "$equipmentId" },
+            pipeline: [
+              {
+                $match: {
+                  $expr: {
+                    $eq: [
+                      { $toString: "$_id" },
+                      { $toString: "$$equipmentId" },
+                    ],
+                  },
+                },
+              },
+            ],
+            as: "equipment",
+          },
+        },
+        {
+          $unwind: {
+            path: "$equipment",
+            preserveNullAndEmptyArrays: true,
+          },
+        },
+        {
+          $sort: { createdAt: -1 },
+        },
+      ])
       .toArray();
-    res.status(200).send({
+
+    res.status(200).json({
       success: true,
-      count: rentals.length,
+      message: "All rentals retrieved successfully",
       rentals,
     });
   } catch (error) {
     console.error("Admin rentals error:", error);
-    res.status(500).send({
+
+    res.status(500).json({
       success: false,
-      message: "Failed to fetch rentals",
+      message: "Failed to retrieve rentals",
     });
   }
 });
@@ -1624,11 +1665,16 @@ app.get("/api/equipment", async (req, res) => {
       status: "approved",
     };
 
-    // 4. Search by equipment name or location
+    // 4. Search by title, name, category and location
     if (search && String(search).trim()) {
       const searchRegex = new RegExp(escapeRegex(String(search).trim()), "i");
 
-      match.$or = [{ name: searchRegex }, { location: searchRegex }];
+      match.$or = [
+        { title: searchRegex },
+        { name: searchRegex },
+        { category: searchRegex },
+        { location: searchRegex },
+      ];
     }
 
     // 5. Category filter
@@ -2518,88 +2564,6 @@ app.post(
   }
 );
 
-// Admin Analytics
-
-app.get("/api/admin/analytics", verifyToken, verifyAdmin, async (req, res) => {
-  try {
-    const [
-      totalUsers,
-      totalEquipment,
-      totalBookings,
-      pendingApprovals,
-      completedRentals,
-      revenueResult,
-      monthlyBookings,
-    ] = await Promise.all([
-      usersCollection.countDocuments(),
-
-      equipmentCollection.countDocuments(),
-
-      bookingsCollection.countDocuments(),
-
-      equipmentCollection.countDocuments({
-        status: "pending",
-      }),
-
-      bookingsCollection.countDocuments({
-        bookingStatus: "completed",
-        paymentStatus: "paid",
-      }),
-
-      paymentsCollection
-        .aggregate([
-          { $match: { paymentStatus: "paid" } },
-          {
-            $group: {
-              _id: null,
-              total: { $sum: "$amount" },
-            },
-          },
-        ])
-        .toArray(),
-
-      bookingsCollection
-        .aggregate([
-          {
-            $group: {
-              _id: {
-                year: { $year: "$createdAt" },
-                month: { $month: "$createdAt" },
-              },
-              totalBookings: { $sum: 1 },
-            },
-          },
-          { $sort: { "_id.year": 1, "_id.month": 1 } },
-        ])
-        .toArray(),
-    ]);
-
-    res.status(200).json({
-      success: true,
-      analytics: {
-        totalUsers,
-        totalEquipment,
-        totalBookings,
-        pendingApprovals,
-        completedRentals,
-        totalRevenue: revenueResult[0]?.total || 0,
-        monthlyBookings: monthlyBookings.map((item) => ({
-          year: item._id.year,
-          month: item._id.month,
-          totalBookings: item.totalBookings,
-        })),
-      },
-    });
-  } catch (error) {
-    console.error("Admin analytics error:", error);
-
-    res.status(500).json({
-      success: false,
-      message: "Failed to load admin analytics",
-    });
-  }
-});
-
 // STRIPE WEBHOOK
 // app.post("/api/stripe/webhook", async (req, res) => {
 //   const signature = req.headers["stripe-signature"];
@@ -2992,6 +2956,261 @@ app.get("/api/bookings/:id", verifyToken, verifyCustomer, async (req, res) => {
     return res.status(500).send({
       success: false,
       message: "Failed to fetch booking.",
+    });
+  }
+});
+
+// Admin Analytics
+
+app.get("/api/admin/analytics", verifyToken, verifyAdmin, async (req, res) => {
+  try {
+    const [
+      totalUsers,
+      totalEquipment,
+      totalBookings,
+      pendingApprovals,
+      completedRentals,
+      revenueResult,
+      monthlyBookings,
+    ] = await Promise.all([
+      // Total users
+      usersCollection.countDocuments(),
+
+      // Total equipment
+      equipmentCollection.countDocuments(),
+
+      // Total bookings
+      bookingsCollection.countDocuments(),
+
+      // Pending equipment approvals
+      equipmentCollection.countDocuments({
+        status: "pending",
+      }),
+
+      // Completed and paid rentals
+      bookingsCollection.countDocuments({
+        status: "completed",
+        paymentStatus: "paid",
+      }),
+
+      // Total successful revenue (Stripe stores USD cents)
+      paymentsCollection
+        .aggregate([
+          {
+            $match: {
+              paymentStatus: "paid",
+            },
+          },
+          {
+            $group: {
+              _id: null,
+              totalCents: {
+                $sum: "$amountTotal",
+              },
+            },
+          },
+        ])
+        .toArray(),
+
+      // Monthly booking statistics
+      bookingsCollection
+        .aggregate([
+          {
+            $match: {
+              createdAt: { $type: "date" },
+            },
+          },
+          {
+            $group: {
+              _id: {
+                year: {
+                  $year: "$createdAt",
+                },
+                month: {
+                  $month: "$createdAt",
+                },
+              },
+              totalBookings: {
+                $sum: 1,
+              },
+            },
+          },
+          {
+            $sort: {
+              "_id.year": 1,
+              "_id.month": 1,
+            },
+          },
+        ])
+        .toArray(),
+    ]);
+
+    // Convert Stripe cents to USD
+    const totalRevenue = (revenueResult[0]?.totalCents || 0) / 100;
+
+    return res.status(200).send({
+      success: true,
+      analytics: {
+        totalUsers,
+        totalEquipment,
+        totalBookings,
+        pendingApprovals,
+        completedRentals,
+        totalRevenue,
+        currency: "USD",
+
+        monthlyBookings: monthlyBookings.map((item) => ({
+          year: item._id.year,
+          month: item._id.month,
+          totalBookings: item.totalBookings,
+        })),
+      },
+    });
+  } catch (error) {
+    console.error("Admin analytics error:", error);
+
+    return res.status(500).send({
+      success: false,
+      message: "Failed to load admin analytics",
+    });
+  }
+});
+
+// Owner Analytics get api
+app.get("/api/owner/analytics", verifyToken, verifyOwner, async (req, res) => {
+  try {
+    const ownerId = req.user.id;
+
+    // Reusable payment lookup pipeline
+    const ownerPaymentPipeline = [
+      {
+        $match: {
+          paymentStatus: "paid",
+        },
+      },
+      {
+        $addFields: {
+          bookingObjectId: {
+            $convert: {
+              input: "$bookingId",
+              to: "objectId",
+              onError: null,
+              onNull: null,
+            },
+          },
+        },
+      },
+      {
+        $lookup: {
+          from: "bookings",
+          localField: "bookingObjectId",
+          foreignField: "_id",
+          as: "booking",
+        },
+      },
+      {
+        $unwind: "$booking",
+      },
+      {
+        $match: {
+          "booking.ownerId": ownerId,
+        },
+      },
+    ];
+
+    const [
+      totalListedEquipment,
+      completedRentals,
+      earningsResult,
+      monthlyEarnings,
+    ] = await Promise.all([
+      // Total equipment listed by this owner
+      equipmentCollection.countDocuments({
+        ownerId,
+      }),
+
+      // Completed and paid rentals
+      bookingsCollection.countDocuments({
+        ownerId,
+        status: "completed",
+        paymentStatus: "paid",
+      }),
+
+      // Total owner earnings
+      paymentsCollection
+        .aggregate([
+          ...ownerPaymentPipeline,
+          {
+            $group: {
+              _id: null,
+              totalCents: {
+                $sum: "$amountTotal",
+              },
+            },
+          },
+        ])
+        .toArray(),
+
+      // Monthly owner earnings
+      paymentsCollection
+        .aggregate([
+          ...ownerPaymentPipeline,
+          {
+            $match: {
+              createdAt: {
+                $type: "date",
+              },
+            },
+          },
+          {
+            $group: {
+              _id: {
+                year: {
+                  $year: "$createdAt",
+                },
+                month: {
+                  $month: "$createdAt",
+                },
+              },
+              earningsCents: {
+                $sum: "$amountTotal",
+              },
+            },
+          },
+          {
+            $sort: {
+              "_id.year": 1,
+              "_id.month": 1,
+            },
+          },
+        ])
+        .toArray(),
+    ]);
+
+    // Convert cents to USD
+    const totalEarnings = (earningsResult[0]?.totalCents || 0) / 100;
+
+    return res.status(200).send({
+      success: true,
+      analytics: {
+        totalListedEquipment,
+        completedRentals,
+        totalEarnings,
+        currency: "USD",
+
+        monthlyEarnings: monthlyEarnings.map((item) => ({
+          year: item._id.year,
+          month: item._id.month,
+          earnings: item.earningsCents / 100,
+        })),
+      },
+    });
+  } catch (error) {
+    console.error("Owner analytics error:", error);
+
+    return res.status(500).send({
+      success: false,
+      message: "Failed to load owner analytics",
     });
   }
 });
