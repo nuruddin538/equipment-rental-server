@@ -13,10 +13,14 @@ const BETTER_AUTH_URL = process.env.BETTER_AUTH_URL;
 // Middleware
 app.use(
   cors({
-    origin: process.env.CLIENT_URL,
+    origin: [
+      "http://localhost:3000",
+      "https://equipment-rental-client-ecru.vercel.app",
+    ],
     credentials: true,
   })
 );
+
 app.use(
   express.json({
     verify: (req, res, buffer) => {
