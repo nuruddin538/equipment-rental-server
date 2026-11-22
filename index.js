@@ -8,7 +8,13 @@ import Stripe from "stripe";
 const app = express();
 const port = process.env.PORT || 5000;
 
-const BETTER_AUTH_URL = process.env.BETTER_AUTH_URL;
+const BETTER_AUTH_URL = process.env.BETTER_AUTH_URL || process.env.CLIENT_URL;
+
+if (!BETTER_AUTH_URL) {
+  console.error(
+    "BETTER_AUTH_URL (or CLIENT_URL) must be set to the public Better Auth base URL."
+  );
+}
 
 // Middleware
 app.use(
@@ -16,6 +22,7 @@ app.use(
     origin: [
       "http://localhost:3000",
       "https://equipment-rental-client-ecru.vercel.app",
+      ...(process.env.CLIENT_URL ? [process.env.CLIENT_URL] : []),
     ],
     credentials: true,
   })
@@ -47,13 +54,14 @@ const favoritesCollection = db.collection("favorites");
 const paymentsCollection = db.collection("payments");
 const reviewsCollection = db.collection("reviews");
 
-const JWKS = createRemoteJWKSet(
-  new URL(`${BETTER_AUTH_URL.replace(/\/$/, "")}/api/auth/jwks`)
-);
+const JWKS = BETTER_AUTH_URL
+  ? createRemoteJWKSet(
+      new URL(`${BETTER_AUTH_URL.replace(/\/$/, "")}/api/auth/jwks`)
+    )
+  : null;
 
 // Verify JWT and load the current user from MongoDB
 const verifyToken = async (req, res, next) => {
-  // try {
   const authorization = req.headers.authorization;
   if (!authorization || !authorization.startsWith("Bearer ")) {
     return res.status(401).send({
@@ -61,8 +69,26 @@ const verifyToken = async (req, res, next) => {
       message: "Unauthorized access. Token is required.",
     });
   }
+  if (!JWKS) {
+    console.error(
+      "JWT verification is unavailable: BETTER_AUTH_URL/CLIENT_URL is not configured."
+    );
+    return res.status(500).send({
+      success: false,
+      message: "Authentication service is not configured.",
+    });
+  }
   const token = authorization.split(" ")[1];
-  const { payload } = await jwtVerify(token, JWKS);
+  let payload;
+  try {
+    ({ payload } = await jwtVerify(token, JWKS));
+  } catch (error) {
+    console.error("JWT verification error:", error);
+    return res.status(401).send({
+      success: false,
+      message: "Invalid or expired authentication token.",
+    });
+  }
   if (!payload) {
     return res.status(401).send({
       success: false,
@@ -110,13 +136,6 @@ const verifyToken = async (req, res, next) => {
     image: user.image || "",
   };
   next();
-  // } catch (error) {
-  //   console.error("JWT verification error:", error.message);
-  //   return res.status(401).send({
-  //     success: false,
-  //     message: "Invalid or expired authentication token.",
-  //   });
-  // }
 };
 
 // SECTION 7: ROLE-BASED AUTHORIZATION
@@ -3229,6 +3248,17 @@ app.get("/", (req, res) => {
   res.send({
     success: true,
     message: "Equipora API is running",
+  });
+});
+
+app.use((error, req, res, next) => {
+  console.error("Unhandled API error:", error);
+  if (res.headersSent) {
+    return next(error);
+  }
+  return res.status(500).send({
+    success: false,
+    message: "Internal server error.",
   });
 });
 
