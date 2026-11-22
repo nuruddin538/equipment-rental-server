@@ -1787,6 +1787,58 @@ app.post(
   }
 );
 
+// DELETE FAVORITES -DELETE
+
+app.delete(
+  "/api/customer/favorites/:id",
+  verifyToken,
+  verifyCustomer,
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).send({
+          success: false,
+          message: "Invalid favorite ID.",
+        });
+      }
+
+      const identityFilter = getFavoriteIdentityFilter(req.user);
+
+      if (!identityFilter) {
+        return res.status(401).send({
+          success: false,
+          message: "Unable to identify customer.",
+        });
+      }
+
+      const result = await favoritesCollection.deleteOne({
+        $and: [identityFilter, { _id: new ObjectId(id) }],
+      });
+
+      if (result.deletedCount === 0) {
+        return res.status(404).send({
+          success: false,
+          message: "Favorite not found.",
+        });
+      }
+
+      return res.status(200).send({
+        success: true,
+        message: "Favorite removed successfully.",
+      });
+    } catch (error) {
+      console.error("Remove favorite error:", error);
+
+      return res.status(500).send({
+        success: false,
+        message: "Failed to remove favorite.",
+      });
+    }
+  }
+);
+
 // BOOKING HELPERS
 // Calculates rental units from the equipment rental type.
 const calculateRentalUnits = (startDate, endDate, rentalType) => {
