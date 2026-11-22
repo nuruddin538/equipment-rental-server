@@ -251,11 +251,11 @@ app.get(
 
       const stringIds = equipmentIds.map((id) => String(id));
 
-      const equipment = equipmentCollection
-        .find({
-          $or: [{ _id: { $in: objectIds } }, { id: { $in: stringIds } }],
-        })
-        .toArray();
+      // const equipment = equipmentCollection
+      //   .find({
+      //     $or: [{ _id: { $in: objectIds } }, { id: { $in: stringIds } }],
+      //   })
+      //   .toArray();
 
       // Fetch equipment documents
       const equipmentDocs = await equipmentCollection
@@ -273,9 +273,12 @@ app.get(
 
       const equipmentMap = new Map();
 
-      equipment.forEach((item) => {
+      equipmentDocs.forEach((item) => {
         equipmentMap.set(item._id.toString(), item);
-        if (item.id) equipmentMap.set(String(item.id), item);
+
+        if (item.id) {
+          equipmentMap.set(String(item.id), item);
+        }
       });
 
       const result = favorites
@@ -1591,6 +1594,253 @@ const verifyOwnerOrAdmin = (req, res, next) => {
   next();
 };
 
+// All Approved Equipment
+
+app.get("/api/equipment", async (req, res) => {
+  try {
+    const {
+      search = "",
+      category = "",
+      rentalType = "",
+      minPrice = "",
+      maxPrice = "",
+      availability = "",
+      sort = "recent",
+      page = "1",
+      limit = "12",
+    } = req.query;
+
+    // 1. Pagination validation
+    const currentPage = Math.max(1, Number(page) || 1);
+
+    const pageLimit = Math.min(50, Math.max(1, Number(limit) || 12));
+
+    // 2. Safely escape search regex
+    const escapeRegex = (value) =>
+      String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+    // 3. Base MongoDB filter
+    const match = {
+      status: "approved",
+    };
+
+    // 4. Search by equipment name or location
+    if (search && String(search).trim()) {
+      const searchRegex = new RegExp(escapeRegex(String(search).trim()), "i");
+
+      match.$or = [{ name: searchRegex }, { location: searchRegex }];
+    }
+
+    // 5. Category filter
+    if (category) {
+      match.category = String(category);
+    }
+
+    // 6. Rental type filter
+    if (rentalType) {
+      match.rentalType = String(rentalType);
+    }
+
+    // 7. Price validation
+    const min = minPrice === "" ? null : Number(minPrice);
+
+    const max = maxPrice === "" ? null : Number(maxPrice);
+
+    if (
+      (min !== null && (!Number.isFinite(min) || min < 0)) ||
+      (max !== null && (!Number.isFinite(max) || max < 0)) ||
+      (min !== null && max !== null && min > max)
+    ) {
+      return res.status(400).send({
+        success: false,
+        message: "Invalid price range.",
+      });
+    }
+
+    // 8. Aggregation pipeline
+    const pipeline = [
+      {
+        $match: match,
+      },
+      {
+        $addFields: {
+          displayPrice: {
+            $convert: {
+              input: {
+                $ifNull: ["$pricePerDay", "$price"],
+              },
+              to: "double",
+              onError: 0,
+              onNull: 0,
+            },
+          },
+
+          isAvailable: {
+            $gt: [
+              {
+                $ifNull: ["$availableQuantity", 0],
+              },
+              0,
+            ],
+          },
+        },
+      },
+    ];
+
+    // 9. Price filter
+    if (min !== null || max !== null) {
+      const priceCondition = {};
+
+      if (min !== null) {
+        priceCondition.$gte = min;
+      }
+
+      if (max !== null) {
+        priceCondition.$lte = max;
+      }
+
+      pipeline.push({
+        $match: {
+          displayPrice: priceCondition,
+        },
+      });
+    }
+
+    // 10. Availability filter
+    if (availability === "available") {
+      pipeline.push({
+        $match: {
+          isAvailable: true,
+        },
+      });
+    } else if (availability === "unavailable") {
+      pipeline.push({
+        $match: {
+          isAvailable: false,
+        },
+      });
+    } else if (availability !== "") {
+      return res.status(400).send({
+        success: false,
+        message: "Invalid availability filter.",
+      });
+    }
+
+    // 11. Sorting
+    let sortOption = {
+      createdAt: -1,
+    };
+
+    if (sort === "price-low") {
+      sortOption = {
+        displayPrice: 1,
+        createdAt: -1,
+      };
+    } else if (sort === "price-high") {
+      sortOption = {
+        displayPrice: -1,
+        createdAt: -1,
+      };
+    } else if (sort === "recent") {
+      sortOption = {
+        createdAt: -1,
+      };
+    } else {
+      return res.status(400).send({
+        success: false,
+        message: "Invalid sorting option.",
+      });
+    }
+
+    // 12. Sort and paginate
+    pipeline.push(
+      {
+        $sort: sortOption,
+      },
+      {
+        $facet: {
+          equipments: [
+            {
+              $skip: (currentPage - 1) * pageLimit,
+            },
+            {
+              $limit: pageLimit,
+            },
+            {
+              $project: {
+                displayPrice: 1,
+                isAvailable: 1,
+                name: 1,
+                description: 1,
+                category: 1,
+                location: 1,
+                price: 1,
+                pricePerDay: 1,
+                rentalType: 1,
+                availableQuantity: 1,
+                condition: 1,
+                brand: 1,
+                model: 1,
+                imageUrl: 1,
+                images: 1,
+                ownerId: 1,
+                ownerName: 1,
+                status: 1,
+                createdAt: 1,
+              },
+            },
+          ],
+
+          totalCount: [
+            {
+              $count: "total",
+            },
+          ],
+        },
+      }
+    );
+
+    // 13. Execute aggregation
+    const [result] = await equipmentCollection.aggregate(pipeline).toArray();
+
+    // 14. Correctly extract equipment array
+    const equipments = result?.equipments || [];
+
+    // 15. Correctly extract total count
+    const total = result?.totalCount?.[0]?.total || 0;
+
+    // 16. Retrieve approved equipment categories
+    const categories = await equipmentCollection.distinct("category", {
+      status: "approved",
+    });
+
+    // 17. Send response
+    return res.status(200).send({
+      success: true,
+      message: "Approved equipment retrieved successfully.",
+
+      equipments,
+
+      categories: categories.filter(Boolean).sort(),
+
+      pagination: {
+        currentPage,
+        limit: pageLimit,
+        total,
+        totalPages: Math.ceil(total / pageLimit),
+      },
+    });
+  } catch (error) {
+    console.error("Get all equipment error:", error);
+
+    return res.status(500).send({
+      success: false,
+      message: "Failed to retrieve equipment",
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
+    });
+  }
+});
+
 // FEATURED EQUIPMENT API
 // Get latest 6 approved equipment items
 app.get("/api/equipment/featured", async (req, res) => {
@@ -1665,6 +1915,7 @@ app.get("/api/equipment/:id", verifyToken, async (req, res) => {
 });
 
 // GET FAVORITES - GET
+
 app.get(
   "/api/customer/favorites",
   verifyToken,
@@ -1672,49 +1923,88 @@ app.get(
   async (req, res) => {
     try {
       const identityFilter = getFavoriteIdentityFilter(req.user);
+
       if (!identityFilter) {
         return res.status(401).send({
           success: false,
           message: "Unable to identify customer.",
         });
       }
-      const savedFavorites = await favoritesCollection
+
+      // 1. Get customer favorites
+      const favorites = await favoritesCollection
         .find(identityFilter)
         .sort({ createdAt: -1 })
         .toArray();
-      const favorites = [];
-      for (const favorite of savedFavorites) {
-        if (!ObjectId.isValid(favorite.equipmentId)) {
-          continue;
-        }
-        const equipment = await equipmentCollection.findOne({
-          _id: new ObjectId(favorite.equipmentId),
-          status: "approved",
-        });
-        if (!equipment) {
-          continue;
-        }
-        favorites.push({
-          favoriteId: favorite._id.toString(),
-          equipmentId: favorite.equipmentId,
-          createdAt: favorite.createdAt,
-          equipment: {
-            ...equipment,
-            _id: equipment._id.toString(),
-          },
+
+      if (!favorites.length) {
+        return res.status(200).send({
+          success: true,
+          count: 0,
+          favorites: [],
         });
       }
+
+      // 2. Extract equipment IDs
+      const equipmentIds = favorites
+        .map((favorite) => String(favorite.equipmentId))
+        .filter(Boolean);
+
+      const objectIds = equipmentIds
+        .filter((id) => ObjectId.isValid(id))
+        .map((id) => new ObjectId(id));
+
+      // 3. Fetch equipment documents
+      const equipmentDocs = await equipmentCollection
+        .find({
+          $or: [{ _id: { $in: objectIds } }, { id: { $in: equipmentIds } }],
+        })
+        .toArray();
+
+      // 4. Create equipment lookup map
+      const equipmentMap = new Map();
+
+      equipmentDocs.forEach((item) => {
+        equipmentMap.set(item._id.toString(), item);
+
+        if (item.id) {
+          equipmentMap.set(String(item.id), item);
+        }
+      });
+
+      // 5. Combine favorites with equipment
+      const result = favorites
+        .map((favorite) => {
+          const item = equipmentMap.get(String(favorite.equipmentId));
+
+          if (!item || item.status !== "approved") {
+            return null;
+          }
+
+          return {
+            favoriteId: favorite._id.toString(),
+            equipmentId: item._id.toString(),
+            createdAt: favorite.createdAt,
+            equipment: {
+              ...item,
+              _id: item._id.toString(),
+            },
+          };
+        })
+        .filter(Boolean);
+
+      // 6. Send response
       return res.status(200).send({
         success: true,
-        count: favorites.length,
-        favorites,
+        count: result.length,
+        favorites: result,
       });
     } catch (error) {
-      console.error("Get customer favorites error:", error);
+      console.error("Customer favorites error:", error);
 
       return res.status(500).send({
         success: false,
-        message: "Failed to load favorite equipment.",
+        message: "Failed to fetch favorites.",
       });
     }
   }
@@ -1899,6 +2189,7 @@ app.post(
   verifyCustomer,
   async (req, res) => {
     let bookingId;
+
     try {
       const {
         equipmentId,
@@ -1910,6 +2201,7 @@ app.post(
         additionalNotes = "",
       } = req.body;
 
+      // 1. Validate equipment ID
       if (!ObjectId.isValid(equipmentId)) {
         return res.status(400).send({
           success: false,
@@ -1917,19 +2209,23 @@ app.post(
         });
       }
 
+      // 2. Validate required booking information
       if (
         !startDate ||
         !endDate ||
         !Number.isInteger(Number(quantity)) ||
         Number(quantity) < 1 ||
-        !contactNumber?.trim() ||
-        !deliveryAddress?.trim()
+        typeof contactNumber !== "string" ||
+        !contactNumber.trim() ||
+        typeof deliveryAddress !== "string" ||
+        !deliveryAddress.trim()
       ) {
         return res.status(400).send({
           success: false,
           message: "Please provide all required booking information.",
         });
       }
+
       if (
         typeof additionalNotes !== "string" ||
         additionalNotes.length > 1000
@@ -1939,6 +2235,8 @@ app.post(
           message: "Additional notes must be under 1000 characters.",
         });
       }
+
+      // 3. Find approved equipment
       const equipment = await equipmentCollection.findOne({
         _id: new ObjectId(equipmentId),
         status: "approved",
@@ -1950,10 +2248,14 @@ app.post(
           message: "Approved equipment not found.",
         });
       }
+
+      // 4. Validate rental dates
       const start = new Date(`${startDate}T00:00:00.000Z`);
       const end = new Date(`${endDate}T00:00:00.000Z`);
+
       const today = new Date();
       today.setUTCHours(0, 0, 0, 0);
+
       if (
         Number.isNaN(start.getTime()) ||
         Number.isNaN(end.getTime()) ||
@@ -1965,8 +2267,10 @@ app.post(
           message: "Please select valid rental dates.",
         });
       }
+
       const requestedQuantity = Number(quantity);
 
+      // 5. Check equipment availability
       const reservedQuantity = await getReservedQuantity(
         equipment._id.toString(),
         start,
@@ -1985,32 +2289,98 @@ app.post(
           )} item(s) are available for these dates.`,
         });
       }
+
+      // 6. Calculate rental duration
       const { rentalDays, rentalUnits } = calculateRentalUnits(
         start,
         end,
         equipment.rentalType
       );
-      const unitPrice = Number(equipment.price);
 
-      if (!Number.isFinite(unitPrice) || unitPrice <= 0) {
+      // 7. Validate equipment price (USD)
+      const rawUnitPrice = Number(equipment.price);
+
+      if (!Number.isFinite(rawUnitPrice) || rawUnitPrice <= 0) {
         return res.status(400).send({
           success: false,
           message: "Invalid equipment rental price.",
         });
       }
 
-      const totalAmount =
-        Math.round(unitPrice * rentalUnits * requestedQuantity * 100) / 100;
+      // Equipment price is in USD.
+      // Example: $100 = 10000 cents.
+      const stripeUnitAmount = Math.round(rawUnitPrice * 100);
 
-      const currency = (process.env.STRIPE_CURRENCY || "usd").toLowerCase();
+      if (!Number.isSafeInteger(stripeUnitAmount) || stripeUnitAmount <= 0) {
+        return res.status(400).send({
+          success: false,
+          message: "Invalid equipment rental price.",
+        });
+      }
+
+      // Normalize unit price to the exact cent amount charged by Stripe.
+      const unitPrice = stripeUnitAmount / 100;
+
+      // 8. Calculate total amount in cents
+      const stripeQuantity = rentalUnits * requestedQuantity;
+
+      const stripeTotalAmount = stripeUnitAmount * stripeQuantity;
+
+      if (!Number.isSafeInteger(stripeTotalAmount) || stripeTotalAmount <= 0) {
+        return res.status(400).send({
+          success: false,
+          message: "Invalid Stripe payment amount.",
+        });
+      }
+
+      // Stripe USD minimum amount is $0.50.
+      if (stripeTotalAmount < 50) {
+        return res.status(400).send({
+          success: false,
+          message:
+            "Minimum payment amount is $0.50 USD. Please select equipment with a higher rental price or a longer rental period.",
+        });
+      }
+
+      // USD is the actual equipment pricing currency.
+      const currency = "usd";
+
+      // Store amount in dollars in the booking.
+      const totalAmount = stripeTotalAmount / 100;
+
+      console.log("Stripe Amount Debug:", {
+        equipmentPrice: equipment.price,
+        unitPrice,
+        rentalDays,
+        rentalUnits,
+        requestedQuantity,
+        stripeQuantity,
+        totalAmount,
+        currency,
+        stripeUnitAmount,
+        stripeTotalAmount,
+      });
+
+      // 9. Validate frontend URL before creating booking
+      const frontendUrl = process.env.CLIENT_URL?.replace(/\/$/, "");
+
+      if (!frontendUrl) {
+        return res.status(500).send({
+          success: false,
+          message: "CLIENT_URL is not configured.",
+        });
+      }
+
+      // 10. Create pending booking
       const now = new Date();
+
       const expiresAt = new Date(now.getTime() + 30 * 60 * 1000);
 
-      // Create a pending booking before redirecting to Stripe.
       const booking = {
         equipmentId: equipment._id.toString(),
         equipmentName: equipment.name,
         equipmentImage: equipment.imageUrl || "",
+
         ownerId: equipment.ownerId,
         ownerName: equipment.ownerName || "",
         ownerEmail: equipment.ownerEmail || "",
@@ -2021,14 +2391,19 @@ app.post(
 
         startDate: start,
         endDate: end,
+
         rentalDays,
         rentalUnits,
         rentalType: equipment.rentalType,
+
         quantity: requestedQuantity,
 
         unitPrice,
         totalAmount,
         currency,
+
+        // Exact Stripe amount in cents
+        stripeAmountTotal: stripeTotalAmount,
 
         contactNumber: contactNumber.trim(),
         deliveryAddress: deliveryAddress.trim(),
@@ -2043,42 +2418,53 @@ app.post(
         createdAt: now,
         updatedAt: now,
       };
+
       const bookingResult = await bookingsCollection.insertOne(booking);
+
       bookingId = bookingResult.insertedId;
-      const frontendUrl = process.env.CLIENT_URL?.replace(/\/$/, "");
 
-      if (!frontendUrl) {
-        throw new Error("CLIENT_URL is not configured.");
-      }
-
+      // 11. Create Stripe Checkout Session
       const checkoutSession = await stripe.checkout.sessions.create({
         mode: "payment",
+
         customer_email: req.user.email,
+
         line_items: [
           {
             price_data: {
-              currency,
+              currency: "usd",
+
               product_data: {
                 name: equipment.name,
+
                 description: `${rentalDays} day(s), ${requestedQuantity} item(s)`,
+
                 ...(equipment.imageUrl ? { images: [equipment.imageUrl] } : {}),
               },
-              unit_amount: Math.round(unitPrice * 100),
+
+              // Example: $100 = 10000 cents
+              unit_amount: stripeUnitAmount,
             },
-            quantity: rentalUnits * requestedQuantity,
+
+            // Rental units × equipment quantity
+            quantity: stripeQuantity,
           },
         ],
+
         metadata: {
           bookingId: bookingId.toString(),
           equipmentId: equipment._id.toString(),
           customerId: req.user.id,
         },
+
         expires_at: Math.floor(expiresAt.getTime() / 1000),
 
         success_url: `${frontendUrl}/payment/success?session_id={CHECKOUT_SESSION_ID}`,
+
         cancel_url: `${frontendUrl}/equipment/${equipment._id.toString()}?payment=cancelled`,
       });
 
+      // 12. Save Stripe session ID
       await bookingsCollection.updateOne(
         {
           _id: bookingId,
@@ -2090,6 +2476,8 @@ app.post(
           },
         }
       );
+
+      // 13. Send checkout URL to frontend
       return res.status(201).send({
         success: true,
         message: "Checkout session created successfully.",
@@ -2100,18 +2488,28 @@ app.post(
       });
     } catch (error) {
       console.error("Create checkout error:", error);
+
+      // Mark failed booking if Stripe session creation fails
       if (bookingId) {
-        await bookingsCollection.updateOne(
-          { _id: bookingId, paymentStatus: "pending" },
-          {
-            $set: {
-              paymentStatus: "failed",
-              status: "cancelled",
-              updatedAt: new Date(),
+        try {
+          await bookingsCollection.updateOne(
+            {
+              _id: bookingId,
+              paymentStatus: "pending",
             },
-          }
-        );
+            {
+              $set: {
+                paymentStatus: "failed",
+                status: "cancelled",
+                updatedAt: new Date(),
+              },
+            }
+          );
+        } catch (updateError) {
+          console.error("Booking failure update error:", updateError);
+        }
       }
+
       return res.status(500).send({
         success: false,
         message: "Unable to create payment session.",
@@ -2275,6 +2673,7 @@ app.post(
 // });
 
 // VERIFY STRIPE CHECKOUT PAYMENT — POST
+
 app.post(
   "/api/payments/checkout-verify",
   verifyToken,
@@ -2283,6 +2682,7 @@ app.post(
     try {
       const { sessionId } = req.body;
 
+      // 1. Validate Stripe session ID
       if (!sessionId || typeof sessionId !== "string") {
         return res.status(400).send({
           success: false,
@@ -2290,7 +2690,7 @@ app.post(
         });
       }
 
-      // Retrieve the actual session directly from Stripe.
+      // 2. Retrieve actual Checkout Session from Stripe
       const session = await stripe.checkout.sessions.retrieve(sessionId);
 
       const bookingId = session.metadata?.bookingId;
@@ -2303,7 +2703,7 @@ app.post(
         });
       }
 
-      // Verify that this session belongs to the logged-in customer.
+      // 3. Verify customer ownership
       if (customerId !== req.user.id) {
         return res.status(403).send({
           success: false,
@@ -2311,6 +2711,7 @@ app.post(
         });
       }
 
+      // 4. Find booking belonging to this customer
       const booking = await bookingsCollection.findOne({
         _id: new ObjectId(bookingId),
         customerId: req.user.id,
@@ -2323,9 +2724,17 @@ app.post(
         });
       }
 
-      // Verify session ownership and payment status.
+      // 5. Verify Checkout Session ownership
+      if (booking.stripeSessionId !== session.id) {
+        return res.status(409).send({
+          success: false,
+          message: "Checkout session does not match this booking.",
+        });
+      }
+
+      // 6. Verify payment completion
       if (
-        booking.stripeSessionId !== session.id ||
+        session.mode !== "payment" ||
         session.status !== "complete" ||
         session.payment_status !== "paid"
       ) {
@@ -2335,12 +2744,20 @@ app.post(
         });
       }
 
-      // Verify the amount and currency.
-      const expectedAmount = Math.round(Number(booking.totalAmount) * 100);
+      // 7. Verify exact amount and currency
+      const expectedAmount = booking.stripeAmountTotal;
+
+      if (!Number.isSafeInteger(expectedAmount) || expectedAmount <= 0) {
+        return res.status(400).send({
+          success: false,
+          message: "Invalid booking payment amount.",
+        });
+      }
 
       if (
         session.amount_total !== expectedAmount ||
-        session.currency !== booking.currency
+        session.currency !== "usd" ||
+        booking.currency !== "usd"
       ) {
         return res.status(409).send({
           success: false,
@@ -2348,6 +2765,7 @@ app.post(
         });
       }
 
+      // 8. Get Payment Intent ID
       const paymentIntentId =
         typeof session.payment_intent === "string"
           ? session.payment_intent
@@ -2355,12 +2773,23 @@ app.post(
 
       const now = new Date();
 
-      // Update booking only if it has not already been paid.
-      await bookingsCollection.updateOne(
+      // 9. Check whether payment was already verified
+      if (booking.paymentStatus === "paid") {
+        return res.status(200).send({
+          success: true,
+          message: "Payment already verified.",
+          bookingId: booking._id.toString(),
+          paymentStatus: "paid",
+        });
+      }
+
+      // 10. Update booking only once
+      const bookingUpdate = await bookingsCollection.updateOne(
         {
           _id: booking._id,
           customerId: req.user.id,
-          paymentStatus: { $ne: "paid" },
+          stripeSessionId: session.id,
+          paymentStatus: "pending",
         },
         {
           $set: {
@@ -2373,31 +2802,62 @@ app.post(
         }
       );
 
-      // Save payment transaction. Upsert prevents duplicate records
-      // for the same Stripe Checkout Session.
+      if (bookingUpdate.modifiedCount !== 1) {
+        const latestBooking = await bookingsCollection.findOne({
+          _id: booking._id,
+          customerId: req.user.id,
+        });
+
+        if (latestBooking?.paymentStatus === "paid") {
+          return res.status(200).send({
+            success: true,
+            message: "Payment already verified.",
+            bookingId: booking._id.toString(),
+            paymentStatus: "paid",
+          });
+        }
+
+        return res.status(409).send({
+          success: false,
+          message: "Booking could not be updated. Please try again.",
+        });
+      }
+
+      // 11. Save payment transaction
+      // Upsert prevents duplicate transaction records.
       await paymentsCollection.updateOne(
-        { stripeSessionId: session.id },
+        {
+          stripeSessionId: session.id,
+        },
         {
           $setOnInsert: {
             bookingId: booking._id.toString(),
             equipmentId: booking.equipmentId,
             customerId: booking.customerId,
             customerEmail: booking.customerEmail,
+
             stripeSessionId: session.id,
             stripePaymentIntentId: paymentIntentId,
+
             amountTotal: session.amount_total,
             currency: session.currency,
+
             paymentStatus: "paid",
             paymentMethod: "stripe",
+
             createdAt: now,
           },
+
           $set: {
             updatedAt: now,
           },
         },
-        { upsert: true }
+        {
+          upsert: true,
+        }
       );
 
+      // 12. Send success response
       return res.status(200).send({
         success: true,
         message: "Payment verified successfully.",
