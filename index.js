@@ -16,6 +16,12 @@ if (!BETTER_AUTH_URL) {
   );
 }
 
+const BETTER_AUTH_ORIGIN = BETTER_AUTH_URL
+  ? BETTER_AUTH_URL.replace(/\/$/, "")
+  : null;
+
+console.log(`Better Auth origin: ${BETTER_AUTH_ORIGIN || "NOT CONFIGURED"}`);
+
 // Middleware
 app.use(
   cors({
@@ -54,10 +60,8 @@ const favoritesCollection = db.collection("favorites");
 const paymentsCollection = db.collection("payments");
 const reviewsCollection = db.collection("reviews");
 
-const JWKS = BETTER_AUTH_URL
-  ? createRemoteJWKSet(
-      new URL(`${BETTER_AUTH_URL.replace(/\/$/, "")}/api/auth/jwks`)
-    )
+const JWKS = BETTER_AUTH_ORIGIN
+  ? createRemoteJWKSet(new URL(`${BETTER_AUTH_ORIGIN}/api/auth/jwks`))
   : null;
 
 // Verify JWT and load the current user from MongoDB
@@ -81,9 +85,24 @@ const verifyToken = async (req, res, next) => {
   const token = authorization.split(" ")[1];
   let payload;
   try {
-    ({ payload } = await jwtVerify(token, JWKS));
+    ({ payload } = await jwtVerify(token, JWKS, {
+      issuer: BETTER_AUTH_ORIGIN,
+      audience: BETTER_AUTH_ORIGIN,
+    }));
   } catch (error) {
     console.error("JWT verification error:", error);
+    const claimOrSignatureErrors = [
+      "JWTClaimValidationFailed",
+      "JWSSignatureVerificationFailed",
+      "JWSInvalid",
+      "JWKSNoMatchingKey",
+    ];
+    if (!claimOrSignatureErrors.includes(error.code)) {
+      return res.status(503).send({
+        success: false,
+        message: "Authentication service is temporarily unavailable.",
+      });
+    }
     return res.status(401).send({
       success: false,
       message: "Invalid or expired authentication token.",
