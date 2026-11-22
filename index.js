@@ -2518,6 +2518,88 @@ app.post(
   }
 );
 
+// Admin Analytics
+
+app.get("/api/admin/analytics", verifyToken, verifyAdmin, async (req, res) => {
+  try {
+    const [
+      totalUsers,
+      totalEquipment,
+      totalBookings,
+      pendingApprovals,
+      completedRentals,
+      revenueResult,
+      monthlyBookings,
+    ] = await Promise.all([
+      usersCollection.countDocuments(),
+
+      equipmentCollection.countDocuments(),
+
+      bookingsCollection.countDocuments(),
+
+      equipmentCollection.countDocuments({
+        status: "pending",
+      }),
+
+      bookingsCollection.countDocuments({
+        bookingStatus: "completed",
+        paymentStatus: "paid",
+      }),
+
+      paymentsCollection
+        .aggregate([
+          { $match: { paymentStatus: "paid" } },
+          {
+            $group: {
+              _id: null,
+              total: { $sum: "$amount" },
+            },
+          },
+        ])
+        .toArray(),
+
+      bookingsCollection
+        .aggregate([
+          {
+            $group: {
+              _id: {
+                year: { $year: "$createdAt" },
+                month: { $month: "$createdAt" },
+              },
+              totalBookings: { $sum: 1 },
+            },
+          },
+          { $sort: { "_id.year": 1, "_id.month": 1 } },
+        ])
+        .toArray(),
+    ]);
+
+    res.status(200).json({
+      success: true,
+      analytics: {
+        totalUsers,
+        totalEquipment,
+        totalBookings,
+        pendingApprovals,
+        completedRentals,
+        totalRevenue: revenueResult[0]?.total || 0,
+        monthlyBookings: monthlyBookings.map((item) => ({
+          year: item._id.year,
+          month: item._id.month,
+          totalBookings: item.totalBookings,
+        })),
+      },
+    });
+  } catch (error) {
+    console.error("Admin analytics error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to load admin analytics",
+    });
+  }
+});
+
 // STRIPE WEBHOOK
 // app.post("/api/stripe/webhook", async (req, res) => {
 //   const signature = req.headers["stripe-signature"];
