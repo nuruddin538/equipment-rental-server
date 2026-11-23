@@ -14,6 +14,10 @@ The backend provides secure API endpoints for customers, equipment owners, and a
 🔗[Frontend Github Repository](https://github.com/nuruddin538/equipment-rental-client)
 🔗[Backend Github Repository](https://github.com/nuruddin538/equipment-rental-server)
 
+<!-- Add your project screenshot here -->
+
+## ![DevStack Preview](https://i.ibb.co.com/21N55kj7/equipment-rental.png)
+
 ## 📌 Project Overview
 
 The Equipora backend is responsible for managing the core business logic of the equipment rental platform.
